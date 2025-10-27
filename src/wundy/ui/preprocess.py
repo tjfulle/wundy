@@ -196,9 +196,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         if bc["dof"] != 1:
             # FIXME: Relax this restriction when additional DOFs are added
             errors += 1
-            logger.error(
-                f"DOF {bc['dof']}, required by boundary condition {i + 1}, must be 1"
-            )
+            logger.error(f"DOF {bc['dof']}, required by boundary condition {i + 1}, must be 1")
         boundary.append(
             {
                 "name": name,
@@ -235,9 +233,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         if cl["dof"] != 1:
             # FIXME: Relax this restriction when additional DOFs are added
             errors += 1
-            logger.error(
-                f"DOF {cl['dof']}, required by boundary condition {i + 1}, must be 1"
-            )
+            logger.error(f"DOF {cl['dof']}, required by boundary condition {i + 1}, must be 1")
         boundary.append(
             {
                 "name": name,

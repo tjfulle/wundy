@@ -24,16 +24,18 @@ def solve(
     F = np.zeros(num_dof, dtype=float)
     global_assemble(K, F, coords, blocks, bcs, materials)
     apply_dloads(F, coords, blocks, dloads, materials, block_elem_map)
-    Kbc, Fbc = apply_bcs(K, F, bcs)
-    solution = {"stiff": K, "force": F}
     dofs = np.zeros(num_dof, dtype=float)
+    Kbc, Fbc = apply_bcs(K, F, bcs, dofs)
+    solution = {"stiff": K, "force": F}
     if not equations:
-        dofs = np.linalg.solve(Kbc, Fbc)
-        solution["dofs"] = dofs
+        dofs[:] = np.linalg.solve(Kbc, Fbc)
     else:
-        disp = solve_constrained_system(Kbc, Fbc, bcs, equations)
-        solution.update(disp)
-        assert "dofs" in solution
+        Kbc, Fbc = apply_linear_constraints(Kbc, Fbc, bcs, equations)
+        x = np.linalg.solve(Kbc, Fbc)
+        dofs[:num_dof] = x[:num_dof]
+        solution["lagrange_mulitpliers"] = x[num_dof:]
+
+    solution["dofs"] = dofs
     return solution
 
 
@@ -130,6 +132,7 @@ def apply_bcs(
     K: NDArray[float],
     F: NDArray[float],
     bcs: list[dict],
+    u: NDArray[float],
 ) -> tuple[NDArray[float], NDArray[float]]:
     prescribed_dofs, prescribed_vals = extract_dirichlet(bcs)
     Kbc, Fbc = apply_dirichlet_bcs(K, F, prescribed_dofs, prescribed_vals)
@@ -180,7 +183,7 @@ def apply_dirichlet_bcs_elim(
     return Kff, Ff, free_dofs
 
 
-def solve_constrained_system(
+def apply_linear_constraints(
     K: NDArray[float],
     F: NDArray[float],
     bcs: list[dict],
@@ -261,12 +264,7 @@ def solve_constrained_system(
     Fa[:n] = F
     Fa[n:] = r
 
-    x = np.linalg.solve(Ka, Fa)
-
-    disp: dict[str, Any] = {}
-    disp["dofs"] = x[:n]
-    disp["lagrange_mulitpliers"] = x[n:]
-    return disp
+    return Ka, Fa
 
 
 def gauss_info(npoint: int) -> tuple[NDArray[float], NDArray[float]]:

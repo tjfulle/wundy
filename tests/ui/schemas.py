@@ -66,13 +66,13 @@ def test_validate_input():
     assert inp["boundary conditions"][0] == {
         "nodes": [1],
         "type": DIRICHLET,
-        "dof": 0,
+        "dof": 1,
         "value": 0.0,
     }
     assert inp["boundary conditions"][1] == {
         "nodes": "NSET-1",
         "type": DIRICHLET,
-        "dof": 0,
+        "dof": 1,
         "value": 1.0,
     }
 
@@ -81,7 +81,7 @@ def test_validate_input():
     assert len(nsets) == 1
     assert np.allclose(nsets[0]["nodes"], [2])
 
-    assert inp["concentrated loads"] == [{"nodes": [3], "dof": 0, "value": 2.0}]
+    assert inp["concentrated loads"] == [{"nodes": [3], "dof": 1, "value": 2.0}]
 
     materials = inp["materials"]
     assert isinstance(materials, list)
