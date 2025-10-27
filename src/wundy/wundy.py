@@ -24,17 +24,16 @@ def solve(
     F = np.zeros(num_dof, dtype=float)
     global_assemble(K, F, coords, blocks, bcs, materials)
     apply_dloads(F, coords, blocks, dloads, materials, block_elem_map)
+    Kbc, Fbc = apply_bcs(K, F, bcs)
+    solution = {"stiff": K, "force": F}
     dofs = np.zeros(num_dof, dtype=float)
-    Kbc, Fbc = apply_bcs(K, F, bcs, dofs)
-    if equations:
-        Ka, Fa = apply_linear_constraints(Kbc, Fbc, equations)
-        x = np.linalg.solve(Ka, Fa)
-        dofs[:] = x[: K.shape[0]]
-        lam = x[K.shape[0] :]
+    if not equations:
+        dofs = np.linalg.solve(Kbc, Fbc)
+        solution["dofs"] = dofs
     else:
-        # solve the system
-        dofs[:] = np.linalg.solve(Kbc, Fbc)
-    solution = {"dofs": dofs, "stiff": K, "force": F}
+        disp = solve_constrained_system(Kbc, Fbc, bcs, equations)
+        solution.update(disp)
+        assert "dofs" in solution
     return solution
 
 
@@ -114,20 +113,25 @@ def apply_dloads(
             F[eft] += fe
 
 
+def extract_dirichlet(bcs: list[dict]) -> tuple[NDArray[int], NDArray[float]]:
+    dofs: list[int] = []
+    vals: list[float] = []
+    for bc in bcs:
+        if bc["type"] == DIRICHLET:
+            for n in bc["nodes"]:
+                # FIXME: Update to allow different node fr
+                I = global_dof(n, bc["local_dof"], dof_per_node)
+                dofs.append(I)
+                vals.append(bc["value"])
+    return np.array(dofs, dtype=int), np.array(vals, dtype=float)
+
+
 def apply_bcs(
     K: NDArray[float],
     F: NDArray[float],
     bcs: list[dict],
-    u: NDArray[float],
 ) -> tuple[NDArray[float], NDArray[float]]:
-    prescribed_dofs: list[int] = []
-    prescribed_vals: list[float] = []
-    for bc in bcs:
-        if bc["type"] == DIRICHLET:
-            for n in bc["nodes"]:
-                I = global_dof(n, bc["local_dof"], dof_per_node)
-                prescribed_dofs.append(I)
-                prescribed_vals.append(bc["value"])
+    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs)
     Kbc, Fbc = apply_dirichlet_bcs(K, F, prescribed_dofs, prescribed_vals)
     return Kbc, Fbc
 
@@ -176,18 +180,77 @@ def apply_dirichlet_bcs_elim(
     return Kff, Ff, free_dofs
 
 
-def apply_linear_constraints(
-    K: NDArray[float], F: NDArray[float], equations: list[list[tuple[int, int, float]]]
+def solve_constrained_system(
+    K: NDArray[float],
+    F: NDArray[float],
+    bcs: list[dict],
+    equations: list[list[tuple[int, int, float]]],
 ) -> tuple[NDArray[float], NDArray[float]]:
+    """Enforce homogeneous linear constraints using Lagrange multiplier method, while correctly
+    handling Dirichlet dofs such as dummy nodes.
+
+    Procuedure
+    ----------
+
+    The standard augmented Lagrange system for a set of linear constraints
+
+        C.u = r
+
+    is written as
+
+        ⎡ K   C.T⎤ ⎧ u ⎫   ⎧ F ⎫
+        ⎢        ⎥ ⎪   ⎪ = ⎪   ⎪
+        ⎣ C    0 ⎦ ⎩ 𝜆 ⎭   ⎩ r ⎭
+
+    where:
+    - K is the global stiffness
+    - C is the constraint matrix
+    - 𝜆 are the Lagrange multipliers enforcing the constraings
+    - F is the external force vector
+    - r is the rhs of the constraint.  Only homogeneous linear constraints are supported, so r is
+      initially 0
+
+    If any DOFs participating in the constraint equations are prescribed (known), they must be
+    eliminated before assembling the augmented system.
+
+    For example, if
+
+        u_1 - u_5 = 0
+
+    and u_1 is prescribed (∆), this becomes:
+
+        -u_5 = -∆
+
+    The corresponding row of C has the column for DOF 1 zeroed and r modified by -C[i, 1] * ∆
+
+    The augmented system becomes
+
+        ⎡ K_ff   C_f.T⎤ ⎧ u_f ⎫   ⎧ F_f ⎫
+        ⎢             ⎥ ⎪     ⎪ = ⎪     ⎪
+        ⎣ C_f     0   ⎦ ⎩  𝜆  ⎭   ⎩  r  ⎭
+
+    """
+    assert len(equations) > 0
+    # Build the linear constrain matrix
     m = len(equations)
-    if not m:
-        return K, F
     n = K.shape[0]
     C: NDArray[float] = np.zeros_like(K, shape=(m, n))
     for i, equation in enumerate(equations):
         for node, dof, coeff in equation:
             I = global_dof(node, dof, dof_per_node)
             C[i, I] = coeff
+
+    # Gather prescribed DOFs and values
+    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs)
+    r: NDArray[float] = np.zeros(m, dtype=float)
+    for i, row in enumerate(C):
+        for j, dof in enumerate(prescribed_dofs):
+            coeff = row[dof]
+            if abs(coeff) > 0.0:
+                r[i] -= coeff * prescribed_vals[j]
+                C[i, dof] = 0.0
+
+    # Augmented system for free DOFs + Lagrange multipliers
     Ka: NDArray[float] = np.zeros_like(K, shape=(n + m, n + m))
     Fa: NDArray[float] = np.zeros_like(K, shape=(n + m,))
 
@@ -196,8 +259,14 @@ def apply_linear_constraints(
     Ka[:n, n:] = C.T
     Ka[n:, :n] = C
     Fa[:n] = F
-    Fa[n:] = 0.0  # All constraints are homogenous
-    return Ka, Fa
+    Fa[n:] = r
+
+    x = np.linalg.solve(Ka, Fa)
+
+    disp: dict[str, Any] = {}
+    disp["dofs"] = x[:n]
+    disp["lagrange_mulitpliers"] = x[n:]
+    return disp
 
 
 def gauss_info(npoint: int) -> tuple[NDArray[float], NDArray[float]]:

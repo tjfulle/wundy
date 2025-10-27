@@ -193,10 +193,16 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     )
                 else:
                     nodes.append(node_map[n])
+        if bc["dof"] != 1:
+            # FIXME: Relax this restriction when additional DOFs are added
+            errors += 1
+            logger.error(
+                f"DOF {bc['dof']}, required by boundary condition {i + 1}, must be 1"
+            )
         boundary.append(
             {
                 "name": name,
-                "local_dof": bc["dof"],
+                "local_dof": bc["dof"] - 1,
                 "type": bc["type"],
                 "nodes": nodes,
                 "value": bc["value"],
@@ -226,10 +232,16 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     logger.error(f"Node {n}, required by concentrated load {i + 1}, is not defined")
                 else:
                     nodes.append(node_map[n])
+        if cl["dof"] != 1:
+            # FIXME: Relax this restriction when additional DOFs are added
+            errors += 1
+            logger.error(
+                f"DOF {cl['dof']}, required by boundary condition {i + 1}, must be 1"
+            )
         boundary.append(
             {
                 "name": name,
-                "local_dof": cl["dof"],
+                "local_dof": cl["dof"] - 1,
                 "type": NEUMANN,
                 "nodes": nodes,
                 "value": cl["value"],
@@ -273,6 +285,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             }
         )
 
+    # Process multi-point constraint equations
     equations: list[list[tuple[int, int, float]]] = preprocessed.setdefault("equations", [])
     for i, eq in enumerate(inp.get("equations", [])):
         equation: list[tuple[int, int, float]] = []

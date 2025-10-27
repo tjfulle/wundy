@@ -55,7 +55,7 @@ def normalize_case(string: str) -> str:
 
 
 def dof_id_to_enum(dof: str) -> int:
-    return {"X": 0, "Y": 1, "Z": 2}[normalize_case(dof)]
+    return {"X": 1, "Y": 2, "Z": 3}[normalize_case(dof)]
 
 
 def valid_bc_type(arg: str) -> bool:
@@ -140,7 +140,7 @@ boundary_schema = Schema(
                 And(int, Use(lambda n: [n])),  # single node
                 And(list, list_of_int),  # list of nodes
             ),
-            Optional("dof", default=0): And(str, valid_dof_id, Use(dof_id_to_enum)),
+            Optional("dof", default=1): And(str, valid_dof_id, Use(dof_id_to_enum)),
             Optional("name"): And(str, Use(normalize_case)),
             Optional("value", default=0.0): And(isnumeric, Use(float)),
             Optional("type", default=DIRICHLET): And(str, valid_bc_type, Use(bc_type_to_enum)),
@@ -156,7 +156,7 @@ cload_schema = Schema(
                 And(int, Use(lambda n: [n])),  # single node
                 And(list, list_of_int),  # list of nodes
             ),
-            Optional("dof", default=0): And(str, valid_dof_id, Use(dof_id_to_enum)),
+            Optional("dof", default=1): And(str, valid_dof_id, Use(dof_id_to_enum)),
             Optional("name"): And(str, Use(normalize_case)),
             Optional("value", default=0.0): Use(float),
         },

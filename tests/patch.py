@@ -174,3 +174,68 @@ wundy:
     u = soln["dofs"]
     assert np.allclose(u[1], 2 * u[4], rtol=1e-12)
     assert np.allclose(u[2], 3 * u[5], rtol=1e-12)
+
+
+def test_patch_mpc_dummy():
+    f = io.StringIO()
+    f.write("""\
+wundy:
+  nodes:
+  - [1, 0.0]
+  - [2, 1.0]
+  - [3, 2.0]
+  - [4, 3.0]
+  - [5, 4.0]
+  - [6, 5.0]
+  - [100, 0.0]
+  elements:
+  - [1, 1, 2]
+  - [2, 2, 3]
+  - [3, 3, 4]
+  - [4, 4, 5]
+  - [5, 5, 6]
+  materials:
+  - name: mat-1
+    type: elastic
+    parameters:
+      E: 1.0
+      nu: 0.0
+  element blocks:
+  - name: block-1
+    element:
+      type: t1d1
+      properties:
+        area: 1.0
+    elements: elset-1
+    material: mat-1
+  boundary conditions:
+  - name: bc-1
+    type: dirichlet
+    nodes: [1]
+    dof: x
+    value: 0.0
+  - name: bc-2
+    type: dirichlet
+    nodes: [100]
+    dof: x
+    value: 3.4
+  element sets:
+  - name: elset-1
+    elements: [1, 2, 3, 4, 5]
+  equations:
+  - u[6, 1] - u[100, 1]
+""")
+    f.seek(0)
+    data = wundy.ui.load(f)
+    inp = wundy.ui.preprocess(data)
+    soln = solve(
+        inp["coords"],
+        inp["blocks"],
+        inp["bcs"],
+        inp["dload"],
+        inp["materials"],
+        inp["equations"],
+        inp["block_elem_map"],
+    )
+    u = soln["dofs"]
+    assert np.allclose(u[5], 3.4, rtol=1e-12)
