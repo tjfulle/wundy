@@ -6,6 +6,7 @@ from numpy.typing import NDArray
 from .ui.schemas import DIRICHLET
 from .ui.schemas import NEUMANN
 
+# WARNING: This constant will need to be removed when additional elements are added.
 dof_per_node: int = 1
 
 
@@ -162,19 +163,27 @@ def apply_dirichlet_bcs_elim(
     dofs: NDArray[int],
     vals: NDArray[float],
 ) -> tuple[NDArray[float], NDArray[float], list[int]]:
-    # Apply Dirchlet boundary conditions using a symmetry preserving elimination
-    # Let
-    #   Ku = f
-    # split dofs into two sets:
-    #   1. free
-    #   2. prescribed
-    # Set up new system:
-    #
-    #  | K_ff  K_fp |  [ u_f ]   | F_f |
-    #  | K_pf  K_pp |  [ u_p ]   | F_p |
-    #
-    # Eliminate prescribed dofs:
-    #   K_ff.u_f = Ff - K_fp.u_p
+    """Apply Dirchlet boundary conditions using a symmetry preserving elimination
+    Let
+
+        Ku = f
+
+    split dofs into two sets:
+
+        1. free
+        2. prescribed
+
+    Set up new system:
+
+        ⎡ K_ff   K_fp ⎤ ⎧ u_f ⎫   ⎧ F_f ⎫
+        ⎢             ⎥ ⎨     ⎬ = ⎨     ⎬
+        ⎣ K_pf   K_pp ⎦ ⎩ u_p ⎭   ⎩ F_p ⎭
+
+    Eliminate prescribed dofs:
+
+        [K_ff]{u_f} = {Ff} - [K_fp]{u_p}
+
+    """
     all_dofs = np.arange(K.shape[0])
     free_dofs = np.setdiff1d(all_dofs, dofs)
     Kff = K[np.ix_(free_dofs, free_dofs)]
@@ -202,7 +211,7 @@ def apply_linear_constraints(
     is written as
 
         ⎡ K   C.T⎤ ⎧ u ⎫   ⎧ F ⎫
-        ⎢        ⎥ ⎪   ⎪ = ⎪   ⎪
+        ⎢        ⎥ ⎨   ⎬ = ⎨   ⎬
         ⎣ C    0 ⎦ ⎩ 𝜆 ⎭   ⎩ r ⎭
 
     where:
@@ -229,7 +238,7 @@ def apply_linear_constraints(
     The augmented system becomes
 
         ⎡ K_ff   C_f.T⎤ ⎧ u_f ⎫   ⎧ F_f ⎫
-        ⎢             ⎥ ⎪     ⎪ = ⎪     ⎪
+        ⎢             ⎥ ⎨     ⎬ = ⎨     ⎬
         ⎣ C_f     0   ⎦ ⎩  𝜆  ⎭   ⎩  r  ⎭
 
     """
