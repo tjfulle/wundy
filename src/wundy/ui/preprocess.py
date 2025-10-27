@@ -1,19 +1,12 @@
 import logging
-from typing import IO
 from typing import Any
 
 import numpy as np
-import yaml
 
+from .schemas import DIRICHLET
 from .schemas import NEUMANN
-from .schemas import input_schema
 
 logger = logging.getLogger(__name__)
-
-
-def load(file: IO[Any]) -> dict[str, dict[str, Any]]:
-    data = yaml.safe_load(file)
-    return input_schema.validate(data)
 
 
 def set_element_defaults(elem: dict[str, Any]) -> bool:
@@ -280,6 +273,21 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
             }
         )
 
+    equations: list[list[tuple[int, int, float]]] = preprocessed.setdefault("equations", [])
+    for i, eq in enumerate(inp.get("equations", [])):
+        equation: list[tuple[int, int, float]] = []
+        for node, dof, coeff in eq:
+            if node not in node_map:
+                errors += 1
+                logger.error(f"Node {n} in equation {i + 1} is not defined")
+                continue
+            if dof != 1:
+                errors += 1
+                logger.error(f"Equation {i + 1}, {dof=} not implemented (choose dof=1)")
+                continue
+            equation.append((node_map[node], dof - 1, coeff))
+        equations.append(equation)
+
     # Create a mapping from global element index to block index, local elem index (within the block)
     block_elem_map: dict[int, tuple[int, int]] = preprocessed.setdefault("block_elem_map", {})
     for ib, block in enumerate(blocks):
@@ -295,7 +303,25 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         for e in unassigned:
             logger.error(f"Element {e} is not assigned to any element blocks")
 
+    # Check that all nodes belong to an element or have a Dirichlet BC
+    connected: set[int] = set([node for element in inp["elements"] for node in element[1:]])
+    allnodes: set[int] = set(node_map.keys())
+    if disconnected := allnodes.difference(connected):
+        for node in disconnected:
+            for bc in boundary:
+                if bc["type"] == DIRICHLET and node_map[node] in bc["nodes"]:
+                    break
+            else:
+                errors += 1
+                logger.error(
+                    f"Node {node} is not connected to any element "
+                    "and does not have an associated dirichlet BC."
+                )
+
     if errors:
-        raise ValueError("Stopping due to previous errors")
+        raise UserInputError("Stopping due to previous errors")
 
     return preprocessed
+
+
+class UserInputError(Exception): ...

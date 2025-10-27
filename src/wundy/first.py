@@ -3,8 +3,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from .schemas import DIRICHLET
-from .schemas import NEUMANN
+from .ui.schemas import DIRICHLET
+from .ui.schemas import NEUMANN
 
 
 def first_fe_code(

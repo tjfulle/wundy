@@ -3,8 +3,8 @@ import io
 import numpy as np
 
 import wundy
-from wundy.schemas import DIRICHLET
-from wundy.schemas import NEUMANN
+from wundy.ui.schemas import DIRICHLET
+from wundy.ui.schemas import NEUMANN
 
 
 def user_input() -> io.StringIO:

@@ -43,9 +43,10 @@ lint.select = [ "F", "I" ]
 lint.ignore = [ "E731", "E741", "F841" ]
 lint.isort.force-single-line = true
 lint.per-file-ignores."src/wundy/__init__.py" = [ "F401", "F403", "F405" ]
+lint.per-file-ignores."src/wundy/ui/__init__.py" = [ "F401", "F403", "F405" ]
 
 [tool.ty.src]
 exclude = [
-    "src/wundy/schemas.py"
+    "src/wundy/ui/schemas.py"
 ]
 include = ["src"]

@@ -2,11 +2,11 @@ import io
 
 import numpy as np
 
-import wundy
-import wundy.first
+from wundy import ui
+from wundy.wundy import solve
 
 
-def test_first_1():
+def test_second_1():
     file = io.StringIO()
     file.write("""\
 wundy:
@@ -36,14 +36,15 @@ wundy:
         area: 1
 """)
     file.seek(0)
-    data = wundy.ui.load(file)
-    inp = wundy.ui.preprocess(data)
-    soln = wundy.first.first_fe_code(
+    data = ui.load(file)
+    inp = ui.preprocess(data)
+    soln = solve(
         inp["coords"],
         inp["blocks"],
         inp["bcs"],
         inp["dload"],
         inp["materials"],
+        inp["equations"],
         inp["block_elem_map"],
     )
 

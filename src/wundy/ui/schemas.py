@@ -6,6 +6,8 @@ from schema import Or
 from schema import Schema
 from schema import Use
 
+from .eqparse import parse_equation_expression
+
 NEUMANN = 0
 DIRICHLET = 1
 
@@ -182,6 +184,7 @@ dload_schema = Schema(
     )
 )
 
+
 material_schema = Schema(
     And(
         {
@@ -212,6 +215,8 @@ block_schema = Schema(
     )
 )
 
+equation_schema = Schema(And(str, Use(parse_equation_expression)))
+
 input_schema = Schema(
     {
         "wundy": {
@@ -224,6 +229,7 @@ input_schema = Schema(
             Optional("element sets"): [elset_schema],
             Optional("concentrated loads"): [cload_schema],
             Optional("distributed loads"): [dload_schema],
+            Optional("equations"): [equation_schema],
         }
     }
 )
