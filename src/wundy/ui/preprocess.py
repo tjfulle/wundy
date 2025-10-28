@@ -327,6 +327,8 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     "and does not have an associated dirichlet BC."
                 )
 
+    preprocessed["solver"] = inp["solver"]
+
     if errors:
         raise UserInputError("Stopping due to previous errors")
 

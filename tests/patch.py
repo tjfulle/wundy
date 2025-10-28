@@ -29,7 +29,8 @@ def test_patch_bar_4():
     dloads = []
     block_elem_map = {e: (0, e) for e in range(connect.shape[0])}
     equations = []
-    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map)
+    solver = {"type": "DIRECT"}
+    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver)
     u = soln["dofs"]
     K = soln["stiff"]
     F = soln["force"]
@@ -72,7 +73,8 @@ def test_patch_bar_dload():
     dloads = [dload]
     block_elem_map = {e: (0, e) for e in range(connect.shape[0])}
     equations = []
-    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map)
+    solver = {"type": "DIRECT"}
+    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver)
     u = soln["dofs"]
     K = soln["stiff"]
     F = soln["force"]
@@ -114,7 +116,8 @@ def test_patch_mpc():
     dloads = [dload]
     block_elem_map = {e: (0, e) for e in range(connect.shape[0])}
     equations = [[(1, 0, 1.0), (4, 0, -1.0)], [(2, 0, 1.0), (5, 0, -1.0)]]
-    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map)
+    solver = {"type": "DIRECT"}
+    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver)
     u = soln["dofs"]
     assert np.allclose(u[1], u[4], rtol=1e-12)
     assert np.allclose(u[2], u[5], rtol=1e-12)
@@ -181,6 +184,7 @@ wundy:
         inp["materials"],
         inp["equations"],
         inp["block_elem_map"],
+        inp["solver"],
     )
     u = soln["dofs"]
     assert np.allclose(u[1], 2 * u[4], rtol=1e-12)
@@ -247,6 +251,47 @@ wundy:
         inp["materials"],
         inp["equations"],
         inp["block_elem_map"],
+        inp["solver"],
     )
     u = soln["dofs"]
     assert np.allclose(u[5], 3.4, rtol=1e-12)
+
+
+def test_patch_bar_4_newton():
+    L = 1.0
+    coords = np.array([[0.0], [0.2], [0.5], [0.7], [L]])
+    connect = np.array([[0, 1], [1, 2], [2, 3], [3, 4]])
+    A = 1.0
+    nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
+    block = {
+        "connect": connect,
+        "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "material": "steel",
+    }
+    blocks = [block]
+    E = 210e9
+    steel = {"parameters": {"E": E}}
+    materials = {"steel": steel}
+    ubar = 0.001
+    bcs = [
+        {"type": 1, "nodes": [0], "local_dof": 0, "value": 0.0},
+        {"type": 1, "nodes": [4], "local_dof": 0, "value": ubar},
+    ]
+    dloads = []
+    block_elem_map = {e: (0, e) for e in range(connect.shape[0])}
+    equations = []
+    solver = {"type": "NEWTON"}
+    soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver)
+    u = soln["dofs"]
+    K = soln["stiff"]
+    F = soln["force"]
+    xc = np.linspace(0.0, L, coords.shape[0])
+    uc = np.linspace(0.0, ubar, coords.shape[0])
+    u_exact = np.interp(coords.flatten(), xc, uc)
+    strain_exact = (ubar - 0.0) / L
+    stress_exact = E * strain_exact
+    reaction_exact = -stress_exact * A
+    disp_err = np.linalg.norm(soln["dofs"] - u_exact)
+    assert disp_err < 1e-12, f"Patch test failed: displacement error {disp_err}"
+    reaction = np.dot(K, u) - F
+    assert np.allclose(reaction[0], reaction_exact, rtol=1e-12)

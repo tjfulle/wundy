@@ -46,6 +46,7 @@ wundy:
         inp["materials"],
         inp["equations"],
         inp["block_elem_map"],
+        inp["solver"],
     )
 
     dofs = soln["dofs"]

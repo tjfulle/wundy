@@ -1,4 +1,5 @@
 from typing import Any
+from typing import Callable
 
 from schema import And
 from schema import Optional
@@ -16,14 +17,17 @@ element_types = {"T1D1"}
 bc_types = {"DIRICHLET", "NEUMANN"}
 
 
+def choose_from(*args: str) -> Callable:
+    choices = [normalize_case(a) for a in args]
+    def inner(arg: str) -> bool:
+        return normalize_case(arg) in choices
+    return inner
+
+
 def node_freedom_table(elem_type: str) -> tuple[int, ...]:
     if normalize_case(elem_type) == "T1D1":
         return (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     raise ValueError(f"Unknown element type {elem_type!r}")
-
-
-def valid_element_type(name: str) -> bool:
-    return normalize_case(name) in element_types
 
 
 def isnumeric(x) -> bool:
@@ -143,7 +147,7 @@ boundary_schema = Schema(
             Optional("dof", default=1): And(str, valid_dof_id, Use(dof_id_to_enum)),
             Optional("name"): And(str, Use(normalize_case)),
             Optional("value", default=0.0): And(isnumeric, Use(float)),
-            Optional("type", default=DIRICHLET): And(str, valid_bc_type, Use(bc_type_to_enum)),
+            Optional("type", default=DIRICHLET): And(str, choose_from(*bc_types), Use(bc_type_to_enum)),
         },
     )
 )
@@ -207,7 +211,7 @@ block_schema = Schema(
                 And(list, list_of_int),
             ),
             "element": {
-                "type": And(str, valid_element_type, Use(normalize_case)),
+                "type": And(str, choose_from(*element_types), Use(normalize_case)),
                 Optional("properties", default=dict()): {str: object},
             },
         },
@@ -217,6 +221,21 @@ block_schema = Schema(
 
 equation_schema = Schema(And(str, Use(parse_equation_expression)))
 
+solver_schema = Schema(
+        {
+            "type": And(
+                str,
+                choose_from("direct", "newton"),
+                Use(normalize_case),
+            ),
+            Optional("options"): {
+                Optional("max iterations"): And(int, ispositive),
+                "tolerance": And(float, ispositive),
+                "line search": bool,
+            }
+        },
+)
+
 input_schema = Schema(
     {
         "wundy": {
@@ -225,6 +244,7 @@ input_schema = Schema(
             "boundary conditions": [boundary_schema],
             "materials": [material_schema],
             "element blocks": [block_schema],
+            Optional("solver", default={"type": "DIRECT"}): solver_schema,
             Optional("node sets"): [nset_schema],
             Optional("element sets"): [elset_schema],
             Optional("concentrated loads"): [cload_schema],

@@ -1,4 +1,6 @@
+import logging
 from typing import Any
+from typing import Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -6,11 +8,31 @@ from numpy.typing import NDArray
 from .ui.schemas import DIRICHLET
 from .ui.schemas import NEUMANN
 
-# WARNING: This constant will need to be removed when additional elements are added.
-dof_per_node: int = 1
-
+logger = logging.getLogger(__name__)
 
 def solve(
+    coords: NDArray[float],
+    blocks: list[dict],
+    bcs: list[dict],
+    dloads: list[dict],
+    materials: dict[str, Any],
+    equations: list[list[tuple[int, int, float]]],
+    block_elem_map: dict[int, tuple[int, int]],
+    solver: dict[str, Any],
+) -> dict[str, Any]:
+    solver_type = solver["type"]
+    if solver_type == "DIRECT":
+        return direct_solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map)
+    elif solver_type == "NEWTON":
+        solver_options = solver.get("options") or {}
+        return iterative_solve(
+            coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver_options
+        )
+    else:
+        raise ValueError(f"Unknown solver {solver_type}")
+
+
+def direct_solve(
     coords: NDArray[float],
     blocks: list[dict],
     bcs: list[dict],
@@ -36,6 +58,82 @@ def solve(
         solution["lagrange_mulitpliers"] = x[num_dof:]
     solution["dofs"] = dofs
     return solution
+
+
+def iterative_solve(
+    coords: NDArray[float],
+    blocks: list[dict],
+    bcs: list[dict],
+    dloads: list[dict],
+    materials: dict[str, Any],
+    equations: list[list[tuple[int, int, float]]],
+    block_elem_map: dict[int, tuple[int, int]],
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    num_dof, node_signatures, dof_map = build_dof_layout(coords, blocks, bcs)
+    dofs = np.zeros(num_dof, dtype=float)
+    assemble_fn = lambda u: assemble_linear_system(
+        coords, blocks, bcs, dloads, materials, block_elem_map, dof_map, u
+    )
+    info = _iterative_solve(assemble_fn, dofs, options)
+    if info["converged"]:
+        K = np.zeros((num_dof, num_dof), dtype=float)
+        F = np.zeros(num_dof, dtype=float)
+        global_assemble(K, F, dof_map, coords, blocks, bcs, materials)
+        apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
+        info["stiff"] = K
+        info["force"] = F
+        return info
+    raise RuntimeError(f"Failed to converge in {info['iters']} iterations")
+
+
+
+def _iterative_solve(
+    assemble_fn: Callable[[NDArray[float]], tuple[NDArray[float], NDArray[float]]],
+    u0: NDArray[float],
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    u = u0.copy()
+    tol: float = options.get("tolerance", 1e-6)
+    maxiter: int = options.get("max iterations", 25)
+    line_search: bool = bool(options.get("line search", False))
+    for it in range(maxiter):
+        K, R = assemble_fn(u)
+        resnorm = np.linalg.norm(R)
+        logger.info(f"Newton iter {it:2d}: ||R|| = {resnorm:.3e}")
+        if resnorm < tol:
+            return {"dofs": u, "converged": True, "iters": it, "resnorm": resnorm}
+        du: NDArray[float] = np.linalg.solve(K, -R)
+        alpha: float = 1.0
+        if line_search:
+            for _ in range(8):
+                u_trial = u + alpha * du
+                _, R_trial = assemble_fn(u_trial),
+                if np.linalg.norm(R_trial) < resnorm:
+                    break
+                alpha *= 0.5
+        u += alpha * du
+    return {"dofs": u, "converged": False, "iters": maxiter, "resnorm": resnorm}
+
+
+def assemble_linear_system(
+    coords: NDArray[float],
+    blocks: list[dict],
+    bcs: list[dict],
+    dloads: list[dict],
+    materials: dict[str, Any],
+    block_elem_map: dict[int, tuple[int, int]],
+    dof_map: NDArray[int],
+    u: NDArray[float],
+) -> tuple[NDArray[float], NDArray[float]]:
+    num_dof = u.shape[0]
+    K = np.zeros((num_dof, num_dof), dtype=float)
+    F = np.zeros(num_dof, dtype=float)
+    global_assemble(K, F, dof_map, coords, blocks, bcs, materials)
+    apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
+    Kbc, Fbc = apply_bcs(K, F, dof_map, bcs, u)
+    R = np.dot(Kbc, u) - Fbc
+    return Kbc, R
 
 
 def build_dof_layout(
