@@ -123,7 +123,7 @@ def test_preprocess_input():
         "properties": {
             "area": 1.0,
             "node_per_elem": 2,
-            "freedom_table": [(1, 0, 0, 0, 0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)],
+            "node_freedoms": [(1, 0, 0, 0, 0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)],
         },
     }
 

@@ -11,7 +11,12 @@ def test_patch_bar_4():
     coords = np.array([[0.0], [0.2], [0.5], [0.7], [L]])
     connect = np.array([[0, 1], [1, 2], [2, 3], [3, 4]])
     A = 1.0
-    block = {"connect": connect, "element": {"properties": {"area": A}}, "material": "steel"}
+    nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
+    block = {
+        "connect": connect,
+        "element": {"properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "material": "steel",
+    }
     blocks = [block]
     E = 210e9
     steel = {"parameters": {"E": E}}
@@ -45,7 +50,12 @@ def test_patch_bar_dload():
     coords = np.array([[0.0], [0.25], [0.5], [0.75], [L]])
     connect = np.array([[0, 1], [1, 2], [2, 3], [3, 4]])
     A = 1.0
-    block = {"connect": connect, "element": {"properties": {"area": A}}, "material": "steel"}
+    nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
+    block = {
+        "connect": connect,
+        "element": {"properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "material": "steel",
+    }
     blocks = [block]
     E = 210e9
     steel = {"parameters": {"E": E}}
@@ -82,11 +92,12 @@ def test_patch_mpc():
     L = 1.0
     coords = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
     A = 1.0
+    nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
     connect = np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]])
     blocks = [
         {
             "connect": connect,
-            "element": {"type": "T1D1", "properties": {"area": A}},
+            "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
             "material": "mat1",
         }
     ]

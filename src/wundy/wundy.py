@@ -19,39 +19,72 @@ def solve(
     equations: list[list[tuple[int, int, float]]],
     block_elem_map: dict[int, tuple[int, int]],
 ) -> dict[str, Any]:
-    num_node = coords.shape[0]
-    num_dof = num_node * dof_per_node
+    num_dof, node_signatures, dof_map = build_dof_layout(coords, blocks, bcs)
     K = np.zeros((num_dof, num_dof), dtype=float)
     F = np.zeros(num_dof, dtype=float)
-    global_assemble(K, F, coords, blocks, bcs, materials)
-    apply_dloads(F, coords, blocks, dloads, materials, block_elem_map)
+    global_assemble(K, F, dof_map, coords, blocks, bcs, materials)
+    apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
     dofs = np.zeros(num_dof, dtype=float)
-    Kbc, Fbc = apply_bcs(K, F, bcs, dofs)
+    Kbc, Fbc = apply_bcs(K, F, dof_map, bcs, dofs)
     solution = {"stiff": K, "force": F}
     if not equations:
         dofs[:] = np.linalg.solve(Kbc, Fbc)
     else:
-        Kbc, Fbc = apply_linear_constraints(Kbc, Fbc, bcs, equations)
+        Kbc, Fbc = apply_linear_constraints(Kbc, Fbc, dof_map, bcs, equations)
         x = np.linalg.solve(Kbc, Fbc)
         dofs[:num_dof] = x[:num_dof]
         solution["lagrange_mulitpliers"] = x[num_dof:]
-
     solution["dofs"] = dofs
     return solution
 
 
-def global_dof(node: int, local_dof: int, dof_per_node: int) -> int:
-    """Return the global degree of freedom index for a given node and local dof
+def build_dof_layout(
+    coords: NDArray[float], blocks: list[dict], bcs: list[dict]
+) -> tuple[int, NDArray[int], NDArray[int]]:
+    num_node: int = coords.shape[0]
+    max_dof_per_node = len(blocks[0]["element"]["properties"]["node_freedoms"][0])
+    node_signatures: NDArray[int] = np.zeros((num_node, max_dof_per_node), dtype=int)
 
-    NOTE: Assumes elements have uniform degrees of freedom across the mesh.
+    for block in blocks:
+        node_freedoms = np.asarray(block["element"]["properties"]["node_freedoms"], dtype=int)
+        for nodes in block["connect"]:
+            node_signatures[nodes, :] |= node_freedoms
 
-    """
-    return node * dof_per_node + local_dof
+    # Check for dummy nodes that are not included in element connectivity
+    # All dummy nodes must have associated Dirichlet BCs.  We can use the BC to fill in the node
+    # signature
+    for bc in bcs:
+        node_signatures[bc["nodes"], bc["local_dof"]] |= 1
+
+    if np.any(node_signatures.sum(axis=1) == 0):
+        missing = np.where(node_signatures.sum(axis=1) == 0)[0]
+        raise ValueError(f"Dummy node without Dirichlet BC: {missing.tolist()}")
+
+    active_mask: NDArray[bool] = node_signatures == 1
+    num_dof: int = int(active_mask.sum())
+
+    mask = active_mask.ravel()
+    map = -np.ones_like(mask, dtype=int)
+    map[mask] = np.arange(num_dof)
+    global_dof_map = map.reshape(node_signatures.shape)
+
+    return num_dof, node_signatures, global_dof_map
+
+
+def element_freedom_table(dof_map, nodes, node_freedoms):
+    eft = [
+        dof_map[node, j]
+        for n, node in enumerate(nodes)
+        for j, active in enumerate(node_freedoms[n])
+        if active
+    ]
+    return eft
 
 
 def global_assemble(
     K: NDArray[float],
     F: NDArray[float],
+    dof_map: NDArray[int],
     coords: NDArray[float],
     blocks: list[dict],
     bcs: list[dict],
@@ -62,7 +95,7 @@ def global_assemble(
         properties = block["element"]["properties"]
         material = materials[block["material"]]
         for nodes in block["connect"]:
-            eft = [global_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
+            eft = element_freedom_table(dof_map, nodes, properties["node_freedoms"])
             xe = coords[nodes]
             ke = element_stiffness(xe, material, properties)
             K[np.ix_(eft, eft)] += ke
@@ -71,12 +104,13 @@ def global_assemble(
     for bc in bcs:
         if bc["type"] == NEUMANN:
             for n in bc["nodes"]:
-                I = global_dof(n, bc["local_dof"], dof_per_node)
+                I = dof_map[n, bc["local_dof"]]
                 F[I] += bc["value"]
 
 
 def apply_dloads(
     F: NDArray[float],
+    dof_map: NDArray[int],
     coords: NDArray[float],
     blocks: list[dict],
     dloads: list[dict],
@@ -100,30 +134,32 @@ def apply_dloads(
                 )
             block_index, local_index = block_elem_map[eid]
             block = blocks[block_index]
+            properties = block["element"]["properties"]
             nodes = block["connect"][local_index]
             xe = coords[nodes]
             if dtype == "BX":
                 q = dload["value"] * sign
             elif dtype == "GRAV":
-                A = block["element"]["properties"]["area"]
+                A = properties["area"]
                 mat = materials[block["material"]]
                 rho = mat["density"]
                 q = rho * A * dload["value"] * sign
             else:
                 raise NotImplementedError(f"dload type {dtype!r} not supported for 1D")
-            eft = [global_dof(n, j, dof_per_node) for n in nodes for j in range(dof_per_node)]
+            eft = element_freedom_table(dof_map, nodes, properties["node_freedoms"])
             fe = element_force(xe, q)
             F[eft] += fe
 
 
-def extract_dirichlet(bcs: list[dict]) -> tuple[NDArray[int], NDArray[float]]:
+def extract_dirichlet(
+    bcs: list[dict], dof_map: NDArray[int]
+) -> tuple[NDArray[int], NDArray[float]]:
     dofs: list[int] = []
     vals: list[float] = []
     for bc in bcs:
         if bc["type"] == DIRICHLET:
             for n in bc["nodes"]:
-                # FIXME: Update to allow different node fr
-                I = global_dof(n, bc["local_dof"], dof_per_node)
+                I = dof_map[n, bc["local_dof"]]
                 dofs.append(I)
                 vals.append(bc["value"])
     return np.array(dofs, dtype=int), np.array(vals, dtype=float)
@@ -132,10 +168,11 @@ def extract_dirichlet(bcs: list[dict]) -> tuple[NDArray[int], NDArray[float]]:
 def apply_bcs(
     K: NDArray[float],
     F: NDArray[float],
+    dof_map: NDArray[int],
     bcs: list[dict],
     u: NDArray[float],
 ) -> tuple[NDArray[float], NDArray[float]]:
-    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs)
+    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs, dof_map)
     Kbc, Fbc = apply_dirichlet_bcs(K, F, prescribed_dofs, prescribed_vals)
     return Kbc, Fbc
 
@@ -195,6 +232,7 @@ def apply_dirichlet_bcs_elim(
 def apply_linear_constraints(
     K: NDArray[float],
     F: NDArray[float],
+    dof_map: NDArray[int],
     bcs: list[dict],
     equations: list[list[tuple[int, int, float]]],
 ) -> tuple[NDArray[float], NDArray[float]]:
@@ -249,11 +287,11 @@ def apply_linear_constraints(
     C: NDArray[float] = np.zeros_like(K, shape=(m, n))
     for i, equation in enumerate(equations):
         for node, dof, coeff in equation:
-            I = global_dof(node, dof, dof_per_node)
+            I = dof_map[node, dof]
             C[i, I] = coeff
 
     # Gather prescribed DOFs and values
-    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs)
+    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs, dof_map)
     r: NDArray[float] = np.zeros(m, dtype=float)
     for i, row in enumerate(C):
         for j, dof in enumerate(prescribed_dofs):
@@ -276,6 +314,11 @@ def apply_linear_constraints(
     return Ka, Fa
 
 
+def material_stiffness(material: dict[str, Any]) -> NDArray[float]:
+    E = material["parameters"]["E"]
+    return np.array([[E]])
+
+
 def gauss_info(npoint: int) -> tuple[NDArray[float], NDArray[float]]:
     if npoint == 1:
         return (np.array([0.0]), np.array([2.0]))
@@ -292,11 +335,6 @@ def shape(xi: float) -> NDArray[float]:
 
 def shapegrad(xi: float) -> NDArray[float]:
     return np.array([-1.0, 1.0]) / 2.0
-
-
-def material_stiffness(material: dict[str, Any]) -> NDArray[float]:
-    E = material["parameters"]["E"]
-    return np.array([[E]])
 
 
 def element_stiffness(

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def set_element_defaults(elem: dict[str, Any]) -> bool:
     if elem["type"].upper() == "T1D1":
         nft = (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        props = {"node_per_elem": 2, "freedom_table": [nft, nft]}
+        props = {"node_per_elem": 2, "node_freedoms": [nft, nft]}
         elem["properties"].update(props)
     else:
         raise ValueError(f"Unknown element type {elem['type']!r}")
