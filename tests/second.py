@@ -53,7 +53,8 @@ wundy:
     K = soln["stiff"]
     F = soln["force"]
     assert np.allclose(dofs, [0, 0.2, 0.4, 0.6, 0.8])
-    assert np.allclose(F, [0, 0, 0, 0, 2])
+    R = np.dot(K, dofs) - F
+    assert R[0] == -2.0
     assert np.allclose(
         K,
         [

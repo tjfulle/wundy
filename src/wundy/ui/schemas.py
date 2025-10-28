@@ -19,8 +19,10 @@ bc_types = {"DIRICHLET", "NEUMANN"}
 
 def choose_from(*args: str) -> Callable:
     choices = [normalize_case(a) for a in args]
+
     def inner(arg: str) -> bool:
         return normalize_case(arg) in choices
+
     return inner
 
 
@@ -147,7 +149,9 @@ boundary_schema = Schema(
             Optional("dof", default=1): And(str, valid_dof_id, Use(dof_id_to_enum)),
             Optional("name"): And(str, Use(normalize_case)),
             Optional("value", default=0.0): And(isnumeric, Use(float)),
-            Optional("type", default=DIRICHLET): And(str, choose_from(*bc_types), Use(bc_type_to_enum)),
+            Optional("type", default=DIRICHLET): And(
+                str, choose_from(*bc_types), Use(bc_type_to_enum)
+            ),
         },
     )
 )
@@ -222,18 +226,18 @@ block_schema = Schema(
 equation_schema = Schema(And(str, Use(parse_equation_expression)))
 
 solver_schema = Schema(
-        {
-            "type": And(
-                str,
-                choose_from("direct", "newton"),
-                Use(normalize_case),
-            ),
-            Optional("options"): {
-                Optional("max iterations"): And(int, ispositive),
-                "tolerance": And(float, ispositive),
-                "line search": bool,
-            }
+    {
+        "type": And(
+            str,
+            choose_from("direct", "nonlinear"),
+            Use(normalize_case),
+        ),
+        Optional("options"): {
+            Optional("method"): And(str, choose_from("newton"), Use(normalize_case)),
+            Optional("max_iterations"): And(int, ispositive),
+            Optional("tolerance"): And(float, ispositive),
         },
+    },
 )
 
 input_schema = Schema(

@@ -9,14 +9,13 @@ from .schemas import NEUMANN
 logger = logging.getLogger(__name__)
 
 
-def set_element_defaults(elem: dict[str, Any]) -> bool:
+def set_element_defaults(elem: dict[str, Any]) -> None:
     if elem["type"].upper() == "T1D1":
         nft = (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         props = {"node_per_elem": 2, "node_freedoms": [nft, nft]}
         elem["properties"].update(props)
     else:
         raise ValueError(f"Unknown element type {elem['type']!r}")
-    return True
 
 
 def unique_name(named_items: list[dict], stem: str) -> str:
@@ -27,6 +26,21 @@ def unique_name(named_items: list[dict], stem: str) -> str:
         if name not in names:
             return name
         i += 1
+
+
+def set_solver_defaults(solver: dict[str, Any]) -> None:
+    if solver["type"] == "DIRECT":
+        solver["options"] = {}
+    elif solver["type"] == "NONLINEAR":
+        options = solver.setdefault("options", {})
+        if "method" not in options:
+            options["method"] = "NEWTON"
+        if "max_iterations" not in options:
+            options["max_iterations"] = 25
+        if "tolerance" not in options:
+            options["tolerance"] = 1e-8
+    else:
+        raise ValueError(f"Unknown solver type {solver['type']!r}")
 
 
 def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -327,7 +341,9 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     "and does not have an associated dirichlet BC."
                 )
 
-    preprocessed["solver"] = inp["solver"]
+    solver: dict[str, Any] = preprocessed.setdefault("solver", {})
+    solver["type"] = inp["solver"]["type"]
+    solver["options"] = {}
 
     if errors:
         raise UserInputError("Stopping due to previous errors")

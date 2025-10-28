@@ -1,6 +1,5 @@
 import logging
 from typing import Any
-from typing import Callable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -9,6 +8,7 @@ from .ui.schemas import DIRICHLET
 from .ui.schemas import NEUMANN
 
 logger = logging.getLogger(__name__)
+
 
 def solve(
     coords: NDArray[float],
@@ -22,17 +22,17 @@ def solve(
 ) -> dict[str, Any]:
     solver_type = solver["type"]
     if solver_type == "DIRECT":
-        return direct_solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map)
-    elif solver_type == "NEWTON":
-        solver_options = solver.get("options") or {}
-        return iterative_solve(
-            coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver_options
+        return solve_direct(coords, blocks, bcs, dloads, materials, equations, block_elem_map)
+    elif solver_type == "NONLINEAR":
+        opts = solver.get("options") or {}
+        return solve_nonlinear(
+            coords, blocks, bcs, dloads, materials, equations, block_elem_map, opts
         )
     else:
         raise ValueError(f"Unknown solver {solver_type}")
 
 
-def direct_solve(
+def solve_direct(
     coords: NDArray[float],
     blocks: list[dict],
     bcs: list[dict],
@@ -42,17 +42,19 @@ def direct_solve(
     block_elem_map: dict[int, tuple[int, int]],
 ) -> dict[str, Any]:
     num_dof, node_signatures, dof_map = build_dof_layout(coords, blocks, bcs)
-    K = np.zeros((num_dof, num_dof), dtype=float)
-    F = np.zeros(num_dof, dtype=float)
-    global_assemble(K, F, dof_map, coords, blocks, bcs, materials)
-    apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
     dofs = np.zeros(num_dof, dtype=float)
-    Kbc, Fbc = apply_bcs(K, F, dof_map, bcs, dofs)
-    solution = {"stiff": K, "force": F}
+    K = np.zeros((num_dof, num_dof), dtype=float)
+    F_int = np.zeros(num_dof, dtype=float)
+    global_assemble(K, F_int, coords, dofs, dof_map, blocks, materials)
+    F_ext = np.zeros(num_dof, dtype=float)
+    assemble_global_force(F_ext, dof_map, coords, blocks, bcs, dloads, materials, block_elem_map)
+    R = F_ext - F_int
+    Kbc, Fbc = apply_dirichlet_bcs(K, R, dofs, bcs, dof_map)
+    solution = {"stiff": K, "force": R}
     if not equations:
         dofs[:] = np.linalg.solve(Kbc, Fbc)
     else:
-        Kbc, Fbc = apply_linear_constraints(Kbc, Fbc, dof_map, bcs, equations)
+        Kbc, Fbc = apply_linear_constraints(Kbc, Fbc, dofs, dof_map, bcs, equations)
         x = np.linalg.solve(Kbc, Fbc)
         dofs[:num_dof] = x[:num_dof]
         solution["lagrange_mulitpliers"] = x[num_dof:]
@@ -60,7 +62,7 @@ def direct_solve(
     return solution
 
 
-def iterative_solve(
+def solve_nonlinear(
     coords: NDArray[float],
     blocks: list[dict],
     bcs: list[dict],
@@ -71,69 +73,37 @@ def iterative_solve(
     options: dict[str, Any],
 ) -> dict[str, Any]:
     num_dof, node_signatures, dof_map = build_dof_layout(coords, blocks, bcs)
-    dofs = np.zeros(num_dof, dtype=float)
-    assemble_fn = lambda u: assemble_linear_system(
-        coords, blocks, bcs, dloads, materials, block_elem_map, dof_map, u
-    )
-    info = _iterative_solve(assemble_fn, dofs, options)
-    if info["converged"]:
-        K = np.zeros((num_dof, num_dof), dtype=float)
-        F = np.zeros(num_dof, dtype=float)
-        global_assemble(K, F, dof_map, coords, blocks, bcs, materials)
-        apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
-        info["stiff"] = K
-        info["force"] = F
-        return info
-    raise RuntimeError(f"Failed to converge in {info['iters']} iterations")
-
-
-
-def _iterative_solve(
-    assemble_fn: Callable[[NDArray[float]], tuple[NDArray[float], NDArray[float]]],
-    u0: NDArray[float],
-    options: dict[str, Any],
-) -> dict[str, Any]:
-    u = u0.copy()
-    tol: float = options.get("tolerance", 1e-6)
-    maxiter: int = options.get("max iterations", 25)
-    line_search: bool = bool(options.get("line search", False))
-    for it in range(maxiter):
-        K, R = assemble_fn(u)
-        resnorm = np.linalg.norm(R)
-        logger.info(f"Newton iter {it:2d}: ||R|| = {resnorm:.3e}")
-        if resnorm < tol:
-            return {"dofs": u, "converged": True, "iters": it, "resnorm": resnorm}
-        du: NDArray[float] = np.linalg.solve(K, -R)
-        alpha: float = 1.0
-        if line_search:
-            for _ in range(8):
-                u_trial = u + alpha * du
-                _, R_trial = assemble_fn(u_trial),
-                if np.linalg.norm(R_trial) < resnorm:
-                    break
-                alpha *= 0.5
-        u += alpha * du
-    return {"dofs": u, "converged": False, "iters": maxiter, "resnorm": resnorm}
-
-
-def assemble_linear_system(
-    coords: NDArray[float],
-    blocks: list[dict],
-    bcs: list[dict],
-    dloads: list[dict],
-    materials: dict[str, Any],
-    block_elem_map: dict[int, tuple[int, int]],
-    dof_map: NDArray[int],
-    u: NDArray[float],
-) -> tuple[NDArray[float], NDArray[float]]:
-    num_dof = u.shape[0]
+    u = np.zeros(num_dof, dtype=float)
     K = np.zeros((num_dof, num_dof), dtype=float)
-    F = np.zeros(num_dof, dtype=float)
-    global_assemble(K, F, dof_map, coords, blocks, bcs, materials)
-    apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
-    Kbc, Fbc = apply_bcs(K, F, dof_map, bcs, u)
-    R = np.dot(Kbc, u) - Fbc
-    return Kbc, R
+    F_int = np.zeros(num_dof, dtype=float)
+    F_ext = np.zeros(num_dof, dtype=float)
+    assemble_global_force(F_ext, dof_map, coords, blocks, bcs, dloads, materials, block_elem_map)
+
+    tol: float = options.get("tolerance", 1e-8)
+    maxiter: int = options.get("max iterations", 25)
+    for it in range(maxiter):
+        K.fill(0.0)
+        F_int.fill(0.0)
+        global_assemble(K, F_int, coords, u, dof_map, blocks, materials)
+        rhs = F_ext - F_int
+        Kbc, Fbc = apply_dirichlet_bcs(K, rhs, u, bcs, dof_map)
+        if not equations:
+            du = np.linalg.solve(Kbc, Fbc)
+        else:
+            Kbc, Fbc = apply_linear_constraints(Kbc, Fbc, u, dof_map, bcs, equations)
+            x = np.linalg.solve(Kbc, Fbc)
+            du = x[:num_dof]
+        u += du
+        if np.linalg.norm(du) < tol:
+            break
+    else:
+        raise RuntimeError(f"Newton iterations failed to converge after {it} iterations")
+
+    K.fill(0)
+    F_int.fill(0)
+    global_assemble(K, F_int, coords, u, dof_map, blocks, materials)
+    solution = {"stiff": K, "force": F_ext, "dofs": u}
+    return solution
 
 
 def build_dof_layout(
@@ -181,11 +151,11 @@ def element_freedom_table(dof_map, nodes, node_freedoms):
 
 def global_assemble(
     K: NDArray[float],
-    F: NDArray[float],
-    dof_map: NDArray[int],
+    F_int: NDArray[float],
     coords: NDArray[float],
+    u: NDArray[float],
+    dof_map: NDArray[int],
     blocks: list[dict],
-    bcs: list[dict],
     materials: dict[str, Any],
 ) -> None:
     # Assemble global stiffness
@@ -193,17 +163,24 @@ def global_assemble(
         properties = block["element"]["properties"]
         material = materials[block["material"]]
         for nodes in block["connect"]:
+            ke, fe = get_element_state(coords[nodes], u[nodes], block["element"], material)
             eft = element_freedom_table(dof_map, nodes, properties["node_freedoms"])
-            xe = coords[nodes]
-            ke = element_stiffness(xe, block["element"], material)
             K[np.ix_(eft, eft)] += ke
+            F_int[np.ix_(eft)] += fe
 
-    # Apply Neumann boundary conditions to force
-    for bc in bcs:
-        if bc["type"] == NEUMANN:
-            for n in bc["nodes"]:
-                I = dof_map[n, bc["local_dof"]]
-                F[I] += bc["value"]
+
+def assemble_global_force(
+    F: NDArray[float],
+    dof_map: NDArray[int],
+    coords: NDArray[float],
+    blocks: list[dict],
+    bcs: list[dict],
+    dloads: list[dict],
+    materials: dict[str, Any],
+    block_elem_map: dict[int, tuple[int, int]],
+) -> None:
+    apply_neumann_bcs(F, dof_map, bcs)
+    apply_dloads(F, dof_map, coords, blocks, dloads, materials, block_elem_map)
 
 
 def apply_dloads(
@@ -263,33 +240,33 @@ def extract_dirichlet(
     return np.array(dofs, dtype=int), np.array(vals, dtype=float)
 
 
-def apply_bcs(
-    K: NDArray[float],
-    F: NDArray[float],
-    dof_map: NDArray[int],
-    bcs: list[dict],
-    u: NDArray[float],
-) -> tuple[NDArray[float], NDArray[float]]:
-    prescribed_dofs, prescribed_vals = extract_dirichlet(bcs, dof_map)
-    Kbc, Fbc = apply_dirichlet_bcs(K, F, prescribed_dofs, prescribed_vals)
-    return Kbc, Fbc
-
-
 def apply_dirichlet_bcs(
     K: NDArray[float],
     F: NDArray[float],
-    dofs: NDArray[int],
-    vals: NDArray[float],
+    u: NDArray[float],
+    bcs: list[dict],
+    dof_map: NDArray[int],
 ) -> tuple[NDArray[float], NDArray[float]]:
+    dofs, vals = extract_dirichlet(bcs, dof_map)
     Kbc = K.copy()
     Fbc = F.copy()
-    for dof, val in zip(dofs, vals):
-        Fbc -= K[:, dof] * val
-        Kbc[:, dof] = 0.0
-        Kbc[dof, :] = 0.0
+    ubc = np.zeros_like(vals)
+    for i, dof in enumerate(dofs):
+        ubc[i] = vals[i] - u[dof]
+        Fbc -= K[:, dof] * ubc[i]
+        Kbc[:, dof] = Kbc[dof, :] = 0.0
         Kbc[dof, dof] = 1.0
-        Fbc[dof] = val
+    Fbc[dofs] = ubc
     return Kbc, Fbc
+
+
+def apply_neumann_bcs(F: NDArray[float], dof_map: NDArray[int], bcs: list[dict]) -> None:
+    # Apply Neumann boundary conditions to force
+    for bc in bcs:
+        if bc["type"] == NEUMANN:
+            for n in bc["nodes"]:
+                I = dof_map[n, bc["local_dof"]]
+                F[I] += bc["value"]
 
 
 def apply_dirichlet_bcs_elim(
@@ -330,6 +307,7 @@ def apply_dirichlet_bcs_elim(
 def apply_linear_constraints(
     K: NDArray[float],
     F: NDArray[float],
+    u: NDArray[float],
     dof_map: NDArray[int],
     bcs: list[dict],
     equations: list[list[tuple[int, int, float]]],
@@ -395,7 +373,7 @@ def apply_linear_constraints(
         for j, dof in enumerate(prescribed_dofs):
             coeff = row[dof]
             if abs(coeff) > 0.0:
-                r[i] -= coeff * prescribed_vals[j]
+                r[i] -= coeff * (prescribed_vals[j] - u[dof])
                 C[i, dof] = 0.0
 
     # Augmented system for free DOFs + Lagrange multipliers
@@ -435,24 +413,33 @@ def shapegrad(xi: float) -> NDArray[float]:
     return np.array([-1.0, 1.0]) / 2.0
 
 
-def element_stiffness(
-    xe: NDArray[float], spec: dict[str, Any], material: dict[str, Any], ngauss: int = 2
-) -> NDArray[float]:
+def get_element_state(
+    xe: NDArray[float],
+    ue: NDArray[float],
+    spec: dict[str, Any],
+    material: dict[str, Any],
+    ngauss: int = 2,
+) -> tuple[NDArray[float], NDArray[float]]:
     if spec["type"] == "T1D1":
-        return link_stiffness(xe, spec, material, ngauss=ngauss)
+        return get_link_state(xe, ue, spec, material, ngauss=ngauss)
     else:
         raise ValueError(f"Unknown element type {spec['type']}")
 
 
-def link_stiffness(
-    xe: NDArray[float], spec: dict[str, Any], material: dict[str, Any], ngauss: int = 2
-) -> NDArray[float]:
+def get_link_state(
+    xe: NDArray[float],
+    ue: NDArray[float],
+    spec: dict[str, Any],
+    material: dict[str, Any],
+    ngauss: int = 2,
+) -> tuple[NDArray[float], NDArray[float]]:
     he = xe[1, 0] - xe[0, 0]
     if np.isclose(he, 0.0):
         raise ValueError("Zero-length element detected")
     A = spec["properties"]["area"]
     gp, wp = gauss_info(ngauss)
     ke = np.zeros((2, 2), dtype=float)
+    fe = np.zeros(2, dtype=float)
     for i in range(ngauss):
         dNdxi = shapegrad(gp[i])
         dxdxi = np.dot(dNdxi, xe)
@@ -461,7 +448,10 @@ def link_stiffness(
         B = dNdx[np.newaxis, :]
         D = material_stiffness(material)
         ke += wp[i] * A * np.dot(B.T, np.dot(D, B)) * dxdxi
-    return ke
+        e = np.dot(B, ue)
+        s = D[0, 0] * e
+        fe += wp[i] * A * np.dot(B.T, s).ravel() * dxdxi
+    return ke, fe
 
 
 def element_force(

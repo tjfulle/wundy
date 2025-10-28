@@ -280,7 +280,7 @@ def test_patch_bar_4_newton():
     dloads = []
     block_elem_map = {e: (0, e) for e in range(connect.shape[0])}
     equations = []
-    solver = {"type": "NEWTON"}
+    solver = {"type": "NONLINEAR", "options": {"method": "NEWTON"}}
     soln = solve(coords, blocks, bcs, dloads, materials, equations, block_elem_map, solver)
     u = soln["dofs"]
     K = soln["stiff"]
@@ -293,5 +293,83 @@ def test_patch_bar_4_newton():
     reaction_exact = -stress_exact * A
     disp_err = np.linalg.norm(soln["dofs"] - u_exact)
     assert disp_err < 1e-12, f"Patch test failed: displacement error {disp_err}"
-    reaction = np.dot(K, u) - F
+    with np.printoptions(precision=4):
+        print("u", u)
+        print("K.u", np.dot(K, u))
+        print("F", F)
+        reaction = np.dot(K, u) - F
+        print("R", reaction)
+        print(reaction_exact)
     assert np.allclose(reaction[0], reaction_exact, rtol=1e-12)
+
+
+def test_patch_mpc_dummy_nonlinear():
+    f = io.StringIO()
+    f.write("""\
+wundy:
+  nodes:
+  - [1, 0.0]
+  - [2, 1.0]
+  - [3, 2.0]
+  - [4, 3.0]
+  - [5, 4.0]
+  - [6, 5.0]
+  - [100, 0.0]
+  elements:
+  - [1, 1, 2]
+  - [2, 2, 3]
+  - [3, 3, 4]
+  - [4, 4, 5]
+  - [5, 5, 6]
+  materials:
+  - name: mat-1
+    type: elastic
+    parameters:
+      E: 1.0
+      nu: 0.0
+  element blocks:
+  - name: block-1
+    element:
+      type: t1d1
+      properties:
+        area: 1.0
+    elements: elset-1
+    material: mat-1
+  boundary conditions:
+  - name: bc-1
+    type: dirichlet
+    nodes: [1]
+    dof: x
+    value: 0.0
+  - name: bc-2
+    type: dirichlet
+    nodes: [100]
+    dof: x
+    value: 3.4
+  element sets:
+  - name: elset-1
+    elements: [1, 2, 3, 4, 5]
+  solver:
+    type: nonlinear
+    options:
+      method: newton
+      max_iterations: 25
+      tolerance: .000001
+  equations:
+  - u[6, 1] - u[100, 1]
+""")
+    f.seek(0)
+    data = wundy.ui.load(f)
+    inp = wundy.ui.preprocess(data)
+    soln = solve(
+        inp["coords"],
+        inp["blocks"],
+        inp["bcs"],
+        inp["dload"],
+        inp["materials"],
+        inp["equations"],
+        inp["block_elem_map"],
+        inp["solver"],
+    )
+    u = soln["dofs"]
+    assert np.allclose(u[5], 3.4, rtol=1e-12)
