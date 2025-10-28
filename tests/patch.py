@@ -14,7 +14,7 @@ def test_patch_bar_4():
     nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
     block = {
         "connect": connect,
-        "element": {"properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
         "material": "steel",
     }
     blocks = [block]
@@ -53,7 +53,7 @@ def test_patch_bar_dload():
     nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
     block = {
         "connect": connect,
-        "element": {"properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
         "material": "steel",
     }
     blocks = [block]

@@ -340,6 +340,15 @@ def shapegrad(xi: float) -> NDArray[float]:
 def element_stiffness(
     xe: NDArray[float], spec: dict[str, Any], material: dict[str, Any], ngauss: int = 2
 ) -> NDArray[float]:
+    if spec["type"] == "T1D1":
+        return link_stiffness(xe, spec, material, ngauss=ngauss)
+    else:
+        raise ValueError(f"Unknown element type {spec['type']}")
+
+
+def link_stiffness(
+    xe: NDArray[float], spec: dict[str, Any], material: dict[str, Any], ngauss: int = 2
+) -> NDArray[float]:
     he = xe[1, 0] - xe[0, 0]
     if np.isclose(he, 0.0):
         raise ValueError("Zero-length element detected")
@@ -358,6 +367,15 @@ def element_stiffness(
 
 
 def element_force(
+    xe: NDArray[float], q: float, spec: dict[str, Any], ngauss: int = 2
+) -> NDArray[float]:
+    if spec["type"] == "T1D1":
+        return link_force(xe, q, spec, ngauss=ngauss)
+    else:
+        raise ValueError(f"Unknown element type {spec['type']}")
+
+
+def link_force(
     xe: NDArray[float], q: float, spec: dict[str, Any], ngauss: int = 2
 ) -> NDArray[float]:
     fe = np.zeros(2, dtype=float)
