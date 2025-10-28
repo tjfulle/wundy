@@ -97,7 +97,7 @@ def global_assemble(
         for nodes in block["connect"]:
             eft = element_freedom_table(dof_map, nodes, properties["node_freedoms"])
             xe = coords[nodes]
-            ke = element_stiffness(xe, material, properties)
+            ke = element_stiffness(xe, block["element"], material)
             K[np.ix_(eft, eft)] += ke
 
     # Apply Neumann boundary conditions to force
@@ -147,7 +147,7 @@ def apply_dloads(
             else:
                 raise NotImplementedError(f"dload type {dtype!r} not supported for 1D")
             eft = element_freedom_table(dof_map, nodes, properties["node_freedoms"])
-            fe = element_force(xe, q)
+            fe = element_force(xe, q, block["element"])
             F[eft] += fe
 
 
@@ -338,12 +338,12 @@ def shapegrad(xi: float) -> NDArray[float]:
 
 
 def element_stiffness(
-    xe: NDArray[float], material: dict[str, Any], properties: dict[str, Any], ngauss: int = 2
+    xe: NDArray[float], spec: dict[str, Any], material: dict[str, Any], ngauss: int = 2
 ) -> NDArray[float]:
     he = xe[1, 0] - xe[0, 0]
     if np.isclose(he, 0.0):
         raise ValueError("Zero-length element detected")
-    A = properties["area"]
+    A = spec["properties"]["area"]
     gp, wp = gauss_info(ngauss)
     ke = np.zeros((2, 2), dtype=float)
     for i in range(ngauss):
@@ -357,7 +357,9 @@ def element_stiffness(
     return ke
 
 
-def element_force(xe: NDArray[float], q: float, ngauss: int = 2) -> NDArray[float]:
+def element_force(
+    xe: NDArray[float], q: float, spec: dict[str, Any], ngauss: int = 2
+) -> NDArray[float]:
     fe = np.zeros(2, dtype=float)
     gp, wp = gauss_info(ngauss)
     for i in range(ngauss):
