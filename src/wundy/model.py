@@ -71,6 +71,8 @@ class Model:
         self.neumann_dofs: NDArray[int] = np.array(0, dtype=int)
         self.neumann_vals: NDArray[float] = np.array(0, dtype=float)
 
+        self.solution: dict[str, Any] = {}
+
     @classmethod
     def from_file(cls, file: str | IO[Any]) -> "Model":
         fown: bool = isinstance(file, str)
@@ -109,18 +111,34 @@ class Model:
             )
         for eq in inp.get("equations", []):
             self.add_equation(eq)
+        if s := inp.get("solver"):
+            options = s.get("options", {})
+            method = options.pop("method", None)
+            if s["type"] == "NONLINEAR" and method is None:
+                method = "NEWTON"
+            self.set_solver(s["type"], method, **options)
         return self
 
     @property
     def solver(self) -> Solver:
         if self._solver is None:
-            self._solver = Solver.factory("DIRECT", {})
+            self._solver = Solver.factory("DIRECT")
         assert self._solver is not None
         return self._solver
+
+    def set_solver(self, type: str, method: str | None = None, **options: Any) -> None:
+        self._solver = Solver.factory(type, method, **options)
 
     @solver.setter
     def solver(self, arg: Solver) -> None:
         self._solver = arg
+
+    def solve(self) -> None:
+        if not self.prepared:
+            self.prepare()
+        self.solution.clear()
+        solution = self.solver(self)
+        self.solution.update(solution)
 
     def add_node_set(self, name: str, nodes: list[int]) -> None:
         if name in self.node_sets:
@@ -316,13 +334,19 @@ class Model:
                         f"Element {e}, required by distributed load {name}, is not defined"
                     )
                 elems.append(self.elem_map[e])
+        if len(direction) != 1:
+            raise ValueError(f"1D problem expects one direction component, got {direction}")
+        sign = np.sign(direction[0])
+        if sign == 0.0:
+            raise ValueError(f"dload direction must be ±1, got {direction[0]}")
         self.distributed_loads.append(
             {
                 "name": name,
-                "elements": elems,
+                "elements": np.asarray(elems, dtype=int),
+                "addr": None,  # can't know until prepare() is called
                 "type": type,
                 "value": value,
-                "direction": direction,
+                "direction": np.asarray(direction, dtype=float),
             }
         )
 
@@ -428,6 +452,14 @@ class Model:
             self.neumann_dofs = np.asarray(neumann_dofs)
             self.neumann_vals = np.asarray(neumann_vals)
 
+        # Find block and local block element ID for elements participating in distributed loads
+        for dload in self.distributed_loads:
+            addr: list[tuple[int, int]] = []
+            for i, eid in enumerate(dload["elements"]):
+                b, e = self.find_block_elem(eid)
+                addr.append((int(b), int(e)))
+            dload["addr"] = addr
+
         self.prepared = True
 
     def assemble_system(
@@ -435,22 +467,170 @@ class Model:
     ) -> tuple[NDArray[float], NDArray[float]]:
         if not self.prepared:
             raise RuntimeError("Model is not in prepared state")
-        K = np.zeros((self.num_dof, self.num_dor), dtype=float)
+        K = np.zeros((self.num_dof, self.num_dof), dtype=float)
         F = np.zeros(self.num_dof, dtype=float)
-        for block in self.blocks:
-            mask = self.block_mask(block)
+        for i, block in enumerate(self.blocks):
+            mask = self.block_mask(i)
             kb, fb = block.assemble(u[mask], du[mask])
-            bft = self.block_freedom_table(block)
+            bft = np.arange(self.num_dof, dtype=int)[mask]
             K[np.ix_(bft, bft)] += kb
             F[np.ix_(bft)] += fb
         return K, F
 
-    def block_freedom_table(self, block: Block) -> list[int]:
-        raise NotImplementedError
-
     def block_mask(self, blockno: int) -> NDArray[bool]:
         """Returns a boolean array that is True where the block's dofs are active"""
         return np.where(self.block_dof_map[blockno] != -1)[0]
+
+    def global_force(self, u: NDArray[float], du: NDArray[float]) -> NDArray[float]:
+        F = np.zeros(self.num_dof, dtype=float)
+        self.apply_neumann_bcs(F)
+        self.apply_distributed_loads(F)
+        return F
+
+    def apply_neumann_bcs(self, F: NDArray[float]) -> None:
+        # Apply Neumann boundary conditions to force
+        if self.neumann_dofs.size:
+            F[self.neumann_dofs] += self.neumann_vals
+
+    def apply_dirichlet_bcs(
+        self,
+        K: NDArray[float],
+        F: NDArray[float],
+        u: NDArray[float],
+        du: NDArray[float],
+    ) -> tuple[NDArray[float], NDArray[float]]:
+        Kbc, Fbc = K.copy(), F.copy()
+        ubc = np.zeros_like(self.dirichlet_vals)
+        for i, dof in enumerate(self.dirichlet_dofs):
+            ubc[i] = self.dirichlet_vals[i] - u[dof]
+            Fbc -= K[:, dof] * ubc[i]
+            Kbc[:, dof] = Kbc[dof, :] = 0.0
+            Kbc[dof, dof] = 1.0
+        Fbc[self.dirichlet_dofs] = ubc
+        return Kbc, Fbc
+
+    def apply_distributed_loads(self, F: NDArray[float]) -> None:
+        # Apply distributed loads
+        for dload in self.distributed_loads:
+            dtype = dload["type"]
+            direction = np.array(dload["direction"], dtype=float)
+            sign = np.sign(direction[0])
+            for b, e in dload["addr"]:
+                block = self.blocks[b]
+                ix = block.connect[e]
+                xe = block.coords[ix]
+                if dtype == "BX":
+                    q = dload["value"] * sign
+                elif dtype == "GRAV":
+                    A = block.element.area(xe)
+                    rho = block.material.density
+                    q = rho * A * dload["value"] * sign
+                else:
+                    raise NotImplementedError(f"dload type {dtype!r} not supported for 1D")
+                fe = block.element.force(xe, q)
+                nodes = self.block_nod_map[b, ix]
+                nft = block.element.node_freedom_table
+                eft = self.element_freedom_table(nodes, nft)
+                F[eft] += fe
+
+    def apply_linear_constraints(
+        self,
+        K: NDArray[float],
+        F: NDArray[float],
+        u: NDArray[float],
+        du: NDArray[float],
+    ) -> tuple[NDArray[float], NDArray[float]]:
+        """Enforce homogeneous linear constraints using Lagrange multiplier method, while correctly
+        handling Dirichlet dofs such as dummy nodes.
+
+        Procuedure
+        ----------
+
+        The standard augmented Lagrange system for a set of linear constraints
+
+            C.u = r
+
+        is written as
+
+            ⎡ K   C.T⎤ ⎧ u ⎫   ⎧ F ⎫
+            ⎢        ⎥ ⎨   ⎬ = ⎨   ⎬
+            ⎣ C    0 ⎦ ⎩ 𝜆 ⎭   ⎩ r ⎭
+
+        where:
+        - K is the global stiffness
+        - C is the constraint matrix
+        - 𝜆 are the Lagrange multipliers enforcing the constraings
+        - F is the external force vector
+        - r is the rhs of the constraint.  Only homogeneous linear constraints are supported, so r is
+        initially 0
+
+        If any DOFs participating in the constraint equations are prescribed (known), they must be
+        eliminated before assembling the augmented system.
+
+        For example, if
+
+            u_1 - u_5 = 0
+
+        and u_1 is prescribed (∆), this becomes:
+
+            -u_5 = -∆
+
+        The corresponding row of C has the column for DOF 1 zeroed and r modified by -C[i, 1] * ∆
+
+        The augmented system becomes
+
+            ⎡ K_ff   C_f.T⎤ ⎧ u_f ⎫   ⎧ F_f ⎫
+            ⎢             ⎥ ⎨     ⎬ = ⎨     ⎬
+            ⎣ C_f     0   ⎦ ⎩  𝜆  ⎭   ⎩  r  ⎭
+
+        """
+        assert len(self.equations) > 0
+        # Build the linear constrain matrix
+        m = len(self.equations)
+        n = K.shape[0]
+        C: NDArray[float] = np.zeros_like(K, shape=(m, n))
+        for i, equation in enumerate(self.equations):
+            for node, dof, coeff in equation:
+                I = self.dof_map[node, dof]
+                C[i, I] = coeff
+
+        # Gather prescribed DOFs and values
+        r: NDArray[float] = np.zeros(m, dtype=float)
+        for i, row in enumerate(C):
+            for j, dof in enumerate(self.dirichlet_dofs):
+                coeff = row[dof]
+                if abs(coeff) > 0.0:
+                    r[i] -= coeff * (self.dirichlet_vals[j] - u[dof])
+                    C[i, dof] = 0.0
+
+        # Augmented system for free DOFs + Lagrange multipliers
+        Ka: NDArray[float] = np.zeros_like(K, shape=(n + m, n + m))
+        Fa: NDArray[float] = np.zeros_like(K, shape=(n + m,))
+
+        # Fill blocks
+        Ka[:n, :n] = K
+        Ka[:n, n:] = C.T
+        Ka[n:, :n] = C
+        Fa[:n] = F
+        Fa[n:] = r
+
+        return Ka, Fa
+
+    def element_freedom_table(
+        self, nodes: list[int], node_freedoms: list[tuple[int, ...]]
+    ) -> list[int]:
+        eft = [
+            self.dof_map[node, j]
+            for n, node in enumerate(nodes)
+            for j, active in enumerate(node_freedoms[n])
+            if active
+        ]
+        return eft
+
+    def find_block_elem(self, element: int) -> tuple[int, int]:
+        # Find the block index and local block element corresponding to element
+        rows, cols = np.where(self.block_ele_map == element)
+        return rows[0], cols[0]
 
 
 def unique_name(named_items: list[dict], stem: str) -> str:
