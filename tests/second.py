@@ -29,9 +29,16 @@ wundy:
   element blocks:
   - material: mat-1
     name: block-1
-    elements: all
+    elements: [1, 2]
     element:
-      type: t1d1
+      type: T1D2
+      properties:
+        area: 1
+  - material: mat-1
+    name: block-2
+    elements: [3, 4]
+    element:
+      type: T1D2
       properties:
         area: 1
 """)

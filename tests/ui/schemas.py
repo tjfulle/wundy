@@ -47,7 +47,7 @@ wundy:
     name: block-1
     elements: ALL
     element:
-      type: T1D1
+      type: T1D2
 """)
     file.seek(0)
     return file
@@ -99,7 +99,7 @@ def test_validate_input():
 
     block = blocks[0]
     assert block["element"] == {
-        "type": "T1D1",
+        "type": "T1D2",
         "properties": {"area": 1.0},
     }
     assert block["name"] == "BLOCK-1"
@@ -119,7 +119,7 @@ def test_preprocess_input():
     assert block["material"] == "MAT-1"
     assert np.allclose(block["connect"], np.array([[0, 1], [1, 2]], dtype=int))
     assert block["element"] == {
-        "type": "T1D1",
+        "type": "T1D2",
         "properties": {
             "area": 1.0,
             "node_per_elem": 2,

@@ -13,7 +13,7 @@ NEUMANN = 0
 DIRICHLET = 1
 
 
-element_types = {"T1D1"}
+element_types = {"T1D2", "T2D2", "B1D2"}
 bc_types = {"DIRICHLET", "NEUMANN"}
 
 
@@ -27,8 +27,12 @@ def choose_from(*args: str) -> Callable:
 
 
 def node_freedom_table(elem_type: str) -> tuple[int, ...]:
-    if normalize_case(elem_type) == "T1D1":
+    if normalize_case(elem_type) == "T1D2":
         return (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    elif normalize_case(elem_type) == "T2D2":
+        return (1, 1, 0, 0, 0, 0, 0, 0, 0, 0)
+    elif normalize_case(elem_type) == "B1D2":
+        return (0, 1, 0, 1, 0, 0, 0, 0, 0, 0)
     raise ValueError(f"Unknown element type {elem_type!r}")
 
 
@@ -83,10 +87,16 @@ def valid_dload_type(arg: str):
 
 
 def validate_element(elem: dict[str, Any]) -> bool:
-    if normalize_case(elem["type"]) == "T1D1":
+    if normalize_case(elem["type"]) == "T1D2":
         schema = Schema({Optional("area", default=1.0): And(isnumeric, ispositive)})
         v = schema.validate(elem["properties"])
         elem["properties"].update(v)
+    elif normalize_case(elem["type"]) == "T2D2":
+        schema = Schema({Optional("area", default=1.0): And(isnumeric, ispositive)})
+        v = schema.validate(elem["properties"])
+    elif normalize_case(elem["type"]) == "B1D2":
+        schema = Schema({Optional("I", default=1.0): And(isnumeric, ispositive)})
+        v = schema.validate(elem["properties"])
     else:
         raise ValueError(f"Unknown element type {elem['type']!r}")
     return True

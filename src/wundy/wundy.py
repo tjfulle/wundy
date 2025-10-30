@@ -420,7 +420,7 @@ def get_element_state(
     material: dict[str, Any],
     ngauss: int = 2,
 ) -> tuple[NDArray[float], NDArray[float]]:
-    if spec["type"] == "T1D1":
+    if spec["type"] == "T1D2":
         return get_link_state(xe, ue, spec, material, ngauss=ngauss)
     else:
         raise ValueError(f"Unknown element type {spec['type']}")
@@ -457,7 +457,7 @@ def get_link_state(
 def element_force(
     xe: NDArray[float], q: float, spec: dict[str, Any], ngauss: int = 2
 ) -> NDArray[float]:
-    if spec["type"] == "T1D1":
+    if spec["type"] == "T1D2":
         return link_force(xe, q, spec, ngauss=ngauss)
     else:
         raise ValueError(f"Unknown element type {spec['type']}")

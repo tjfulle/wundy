@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def set_element_defaults(elem: dict[str, Any]) -> None:
-    if elem["type"].upper() == "T1D1":
+    if elem["type"].upper() == "T1D2":
         nft = (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         props = {"node_per_elem": 2, "node_freedoms": [nft, nft]}
         elem["properties"].update(props)

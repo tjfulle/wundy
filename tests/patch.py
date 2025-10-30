@@ -14,7 +14,7 @@ def test_patch_bar_4():
     nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
     block = {
         "connect": connect,
-        "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "element": {"type": "T1D2", "properties": {"area": A, "node_freedoms": [nft, nft]}},
         "material": "steel",
     }
     blocks = [block]
@@ -54,7 +54,7 @@ def test_patch_bar_dload():
     nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
     block = {
         "connect": connect,
-        "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "element": {"type": "T1D2", "properties": {"area": A, "node_freedoms": [nft, nft]}},
         "material": "steel",
     }
     blocks = [block]
@@ -99,7 +99,7 @@ def test_patch_mpc():
     blocks = [
         {
             "connect": connect,
-            "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
+            "element": {"type": "T1D2", "properties": {"area": A, "node_freedoms": [nft, nft]}},
             "material": "mat1",
         }
     ]
@@ -149,7 +149,7 @@ wundy:
   element blocks:
   - name: block-1
     element:
-      type: t1d1
+      type: T1D2
       properties:
         area: 1.0
     elements: elset-1
@@ -218,7 +218,7 @@ wundy:
   element blocks:
   - name: block-1
     element:
-      type: t1d1
+      type: T1D2
       properties:
         area: 1.0
     elements: elset-1
@@ -265,7 +265,7 @@ def test_patch_bar_4_newton():
     nft = (1, 0, 0, 0, 0, 0, 0, 0, 0)
     block = {
         "connect": connect,
-        "element": {"type": "T1D1", "properties": {"area": A, "node_freedoms": [nft, nft]}},
+        "element": {"type": "T1D2", "properties": {"area": A, "node_freedoms": [nft, nft]}},
         "material": "steel",
     }
     blocks = [block]
@@ -330,7 +330,7 @@ wundy:
   element blocks:
   - name: block-1
     element:
-      type: t1d1
+      type: T1D2
       properties:
         area: 1.0
     elements: elset-1
