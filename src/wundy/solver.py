@@ -48,3 +48,37 @@ class DirectSolver(Solver):
             solution["lagrange_mulitpliers"] = x[model.num_dof :]
         solution["dofs"] = u
         return solution
+
+
+class NewtonNonlinearSolver(Solver):
+    type: str = "NONLINEAR"
+    method: str = "NEWTON"
+
+    def __init__(self, **options: Any) -> None:
+        super().__init__(**options)
+        self.tol: float = options.get("tolerance", 1e-8)
+        self.maxiter: int = options.get("max iterations", 25)
+
+    def __call__(self, model: "Model") -> dict[str, Any]:
+        u = np.zeros(model.num_dof, dtype=float)
+        du = np.zeros(model.num_dof, dtype=float)
+        F_ext = model.global_force(u, du)
+        for it in range(self.maxiter):
+            K, F_int = model.assemble_system(u, du)
+            rhs = F_ext - F_int
+            Kbc, Fbc = model.apply_dirichlet_bcs(K, rhs, u, du)
+            if not model.equations:
+                du = np.linalg.solve(Kbc, Fbc)
+            else:
+                Kbc, Fbc = model.apply_linear_constraints(Kbc, Fbc, u, du)
+                x = np.linalg.solve(Kbc, Fbc)
+                du = x[:model.num_dof]
+            u += du
+            if np.linalg.norm(du) < self.tol:
+                break
+        else:
+            raise RuntimeError(f"Newton iterations failed to converge after {it} iterations")
+
+        K, F_int = model.assemble_system(u, du)
+        solution = {"stiff": K, "force": F_ext, "dofs": u}
+        return solution
