@@ -1,0 +1,44 @@
+wundy:
+  nodes:
+    - [0, 0.0]
+    - [1, 1.0]
+    - [2, 2.0]
+    - [3, 3.0]
+    - [4, 4.0]
+
+  elements:
+    - [0, 0, 1]
+    - [1, 1, 2]
+    - [2, 2, 3]
+    - [3, 3, 4]
+
+  boundary conditions:
+    - name: FIXED-END
+      type: DIRICHLET
+      nodes: [0]
+      dof: X       # <-- FIXED
+      value: 0.0
+
+  concentrated loads:
+    - name: TIP-LOAD
+      nodes: [4]
+      dof: X       # <-- FIXED
+      value: 5.0
+
+  distributed loads: []
+
+  materials:
+    - type: NEO_HOOKE
+      name: MAT_NEO
+      parameters:
+        E: 10.0
+        nu: 0.3
+
+  element blocks:
+    - name: BLOCK-1
+      material: MAT_NEO
+      elements: [0, 1, 2, 3]
+      element:
+        type: T1D1
+        properties:
+          area: 1.0

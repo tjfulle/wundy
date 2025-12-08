@@ -1,301 +1,241 @@
 import logging
-from typing import IO
-from typing import Any
+from typing import IO, Any, Dict
 
 import numpy as np
 import yaml
 
-from .schemas import NEUMANN
-from .schemas import input_schema
+from .schemas import NEUMANN, DIRICHLET, input_schema
+from .solver import newton_solve_1d, SolverOptions
 
 logger = logging.getLogger(__name__)
 
 
-def load(file: IO[Any]) -> dict[str, dict[str, Any]]:
-    data = yaml.safe_load(file)
-    return input_schema.validate(data)
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+def _normalize_dof(dof):
+    """Convert dof from ('x','X',0) → integer 0."""
+    if isinstance(dof, int):
+        return dof
+    if isinstance(dof, str):
+        if dof.lower() == "x":
+            return 0
+    raise ValueError(f"Unsupported dof: {dof}")
 
 
-def set_element_defaults(elem: dict[str, Any]) -> bool:
-    if elem["type"].upper() == "T1D1":
-        nft = (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        props = {"node_per_elem": 2, "freedom_table": [nft, nft]}
-        elem["properties"].update(props)
-    else:
-        raise ValueError(f"Unknown element type {elem['type']!r}")
-    return True
-
-
-def unique_name(named_items: list[dict], stem: str) -> str:
-    names = [item.get("name") for item in named_items]
+def unique_name(existing_names: set, stem: str) -> str:
+    """Generate unique sequential names: STEM-1, STEM-2…"""
     i = 1
     while True:
         name = f"{stem.upper()}-{i}"
-        if name not in names:
+        if name not in existing_names:
+            existing_names.add(name)
             return name
         i += 1
 
 
-def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Preprocess and transform user input.
+def set_element_defaults(elem: dict[str, Any]) -> bool:
+    """Defaults for T1D1."""
+    if elem["type"].upper() == "T1D1":
+        nft = (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        elem.setdefault("properties", {})
+        elem["properties"].update({
+            "area": elem["properties"].get("area", 1.0),
+            "node_per_elem": 2,
+            "freedom_table": [nft, nft],
+        })
+        return True
+    raise ValueError(f"Unknown element type {elem['type']}")
 
-    Assumptions: User input was loaded and validated by ``load``
 
-    """
-    errors: int = 0
+# ----------------------------------------------------------------------
+# Load
+# ----------------------------------------------------------------------
+def load(file: IO[Any] | str) -> dict[str, dict[str, Any]]:
+    if isinstance(file, str):
+        with open(file, "r") as f:
+            data = yaml.safe_load(f)
+    else:
+        data = yaml.safe_load(file)
+    return input_schema.validate(data)
 
+
+# ----------------------------------------------------------------------
+# Preprocess
+# ----------------------------------------------------------------------
+def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, Any]:
     inp = data["wundy"]
+    pre = {}
+    errors = 0
 
-    preprocessed: dict[str, Any] = {}
+    # -------------------- nodes --------------------
+    num_node = len(inp["nodes"])
+    max_dim = max(len(n[1:]) for n in inp["nodes"])
+    node_map = pre.setdefault("node_map", {})
+    coords = pre["coords"] = np.zeros((num_node, max_dim))
 
-    num_node: int = len(inp["nodes"])
-    max_dim: int = max(len(n[1:]) for n in inp["nodes"])
-    node_map: dict[int, int] = preprocessed.setdefault("node_map", {})
-    coords = preprocessed["coords"] = np.zeros((num_node, max_dim))
     for i, node in enumerate(inp["nodes"]):
         nid, *xc = node
         node_map[nid] = i
-        coords[i, : len(xc)] = xc
+        coords[i, :len(xc)] = xc
 
-    num_elem: int = len(inp["elements"])
-    elem_map: dict[int, int] = preprocessed.setdefault("elem_map", {})
+    # -------------------- elements --------------------
+    elem_map = pre.setdefault("elem_map", {})
     for i, element in enumerate(inp["elements"]):
         elem_map[element[0]] = i
 
-    # Put node sets in dictionary for easier look up
-    nsets: dict[str, Any] = preprocessed.setdefault("nsets", {})
-    nsets["all"] = list(range(num_node))
+    # -------------------- node sets --------------------
+    nsets = pre.setdefault("nsets", {})
+    nsets["ALL"] = list(range(num_node))
+
     for ns in inp.get("node sets", []):
         name = ns["name"]
-        if name in nsets:
-            errors += 1
-            logger.error(f"Duplicate node set {name!r}")
-        else:
-            nodes: list[int] = []
-            for n in ns["nodes"]:
-                if n not in node_map:
-                    errors += 1
-                    logger.error(f"Node {n} in node set {name} is not defined")
-                else:
-                    nodes.append(node_map[n])
-            nsets[name] = nodes
+        mapped = []
+        for n in ns["nodes"]:
+            mapped.append(node_map[n])
+        nsets[name] = mapped
 
-    # Put element sets in dictionary for easier look up
-    elsets: dict[str, Any] = preprocessed.setdefault("elsets", {})
-    elsets["ALL"] = list(range(num_elem))
+    # -------------------- element sets --------------------
+    elsets = pre.setdefault("elsets", {})
+    elsets["ALL"] = list(range(len(inp["elements"])))
+
     for es in inp.get("element sets", []):
         name = es["name"]
-        if name in elsets:
-            errors += 1
-            logger.error(f"Duplicate element set {name!r}")
-        else:
-            elems: list[int] = []
-            for e in es["elements"]:
-                if e not in elem_map:
-                    errors += 1
-                    logger.error(f"Element {e} in element set {name} is not defined")
-                else:
-                    elems.append(elem_map[e])
-            elsets[name] = elems
+        mapped = []
+        for e in es["elements"]:
+            mapped.append(elem_map[e])
+        elsets[name] = mapped
 
-    # Put materials in dictionary for easier look up
-    materials: dict[str, Any] = preprocessed.setdefault("materials", {})
-    for material in inp["materials"]:
-        name = material["name"]
-        if name in materials:
-            errors += 1
-            logger.error(f"Duplicate material {name!r}")
-        else:
-            materials[name] = {"type": material["type"], "parameters": material["parameters"]}
+    # -------------------- materials --------------------
+    materials = pre.setdefault("materials", {})
+    for m in inp["materials"]:
+        materials[m["name"].upper()] = {
+            "type": m["type"].upper(),
+            "parameters": m["parameters"],
+        }
 
-    # Put element blocks in dictionary for easier look up
-    blocks: list[Any] = preprocessed.setdefault("blocks", [])
+    # -------------------- blocks --------------------
+    blocks = pre.setdefault("blocks", [])
     for eb in inp["element blocks"]:
-        name = eb["name"]
-        if name in blocks:
-            errors += 1
-            logger.error(f"Duplicate element block {name!r}")
-            continue
-        if eb["material"] not in materials:
-            errors += 1
-            logger.error(
-                f"material {eb['material']!r}, required by element block {name}, not defined"
-            )
-            continue
-        block: dict[str, Any] = {}
-        block["name"] = name
+        bname = eb["name"].upper()
+        mat = eb["material"].upper()
+
+        block = {
+            "name": bname,
+            "material": mat,
+        }
+
+        elem_spec = eb["elements"]
+        if isinstance(elem_spec, str):
+            elems = elsets[elem_spec]
+        else:
+            elems = [elem_map[e] for e in elem_spec]
+
+        econnect = []
+        local_map = {}
+        for idx, e in enumerate(elems):
+            _, n1, n2 = inp["elements"][e]
+            econnect.append([node_map[n1], node_map[n2]])
+            local_map[e] = idx
+
+        block["connect"] = np.array(econnect, dtype=int)
+        block["elem_map"] = local_map
+
         block["element"] = eb["element"]
         set_element_defaults(block["element"])
-        block["material"] = eb["material"]
-        elems: list[int] = []
-        if isinstance(eb["elements"], str):
-            # elements given as set name
-            if eb["elements"] not in elsets:
-                errors += 1
-                logger.error(
-                    f"element set {eb['elements']!r}, required by element block {name}, not defined"
-                )
-                continue
-            elems.extend(elsets[eb["elements"]])
-        else:
-            for e in eb["elements"]:
-                if e not in elem_map:
-                    errors += 1
-                    logger.error(f"Element {e}, required for element block {name}, is not defined")
-                else:
-                    elems.append(elem_map[e])
-        if not elems:
-            errors += 1
-            logger.error(f"No elements defined for element block {name}")
-        else:
-            connect: list[list[int]] = []
-            for e in elems:
-                eid, *nodes = inp["elements"][e]
-                if connect and len(nodes) != len(connect[0]):
-                    errors += 1
-                    logger.error(
-                        f"Inconsistent element connectivity in element block {name}. "
-                        "(All elements must have the same number of nodes)"
-                    )
-                    break
-                row: list[int] = []
-                for n in nodes:
-                    if n not in node_map:
-                        errors += 1
-                        logger.error(
-                            f"Node {n} of element {eid} in element block {name} is not in node map"
-                        )
-                    else:
-                        row.append(node_map[n])
-                connect.append(row)
-            else:
-                block["connect"] = np.array(connect, dtype=int)
-                # Map from global index to local index
-                block["elem_map"] = dict(zip(elems, range(len(elems))))
-                blocks.append(block)
 
-    # Convert boundary conditions to tags/vals that can be used by the assembler
-    boundary: list[Any] = preprocessed.setdefault("bcs", [])
-    for i, bc in enumerate(inp["boundary conditions"]):
-        if "name" in bc:
-            name = bc["name"]
+        blocks.append(block)
+
+    # -------------------- BCs + concentrated loads --------------------
+    bcs = pre.setdefault("bcs", [])
+    used_names = set()
+
+    # BCs
+    for bc in inp["boundary conditions"]:
+        name = bc.get("name")
+        if name is None:
+            name = unique_name(used_names, "BOUNDARY")
         else:
-            name = unique_name(inp["boundary conditions"], "BOUNDARY")
-            bc["name"] = name
-        nodes: list[int] = []
+            name = name.upper()
+            used_names.add(name)
+
+        nodes = []
         if isinstance(bc["nodes"], str):
-            if bc["nodes"] not in nsets:
-                errors += 1
-                logger.error(
-                    f"Nodeset {bc['nodes']}, required by boundary condition {i + 1}, is not defined"
-                )
-            else:
-                nodes.extend(nsets[bc["nodes"]])
+            nodes = nsets[bc["nodes"]]
         else:
-            for n in bc["nodes"]:
-                if n not in node_map:
-                    errors += 1
-                    logger.error(
-                        f"Node {n}, required by boundary condition {i + 1}, is not defined"
-                    )
-                else:
-                    nodes.append(node_map[n])
-        boundary.append(
-            {
-                "name": name,
-                "local_dof": bc["dof"],
-                "type": bc["type"],
-                "nodes": nodes,
-                "value": bc["value"],
-            }
-        )
+            nodes = [node_map[n] for n in bc["nodes"]]
 
-    # Convert concentrated loads to tags/vals that can be used by the assembler
-    for i, cl in enumerate(inp.get("concentrated loads", [])):
-        if "name" in cl:
-            name = cl["name"]
+        local_dof = _normalize_dof(bc["dof"])
+
+        bcs.append({
+            "name": name,
+            "local_dof": local_dof,
+            "type": DIRICHLET,
+            "nodes": nodes,
+            "value": bc.get("value", 0.0),
+        })
+
+    # Loads
+    for cl in inp.get("concentrated loads", []):
+        name = cl.get("name")
+        if name is None:
+            name = unique_name(used_names, "CLOAD")
         else:
-            name = unique_name(inp["concentrated loads"], "CLOAD")
-            cl["name"] = name
-        nodes: list[int] = []
+            name = name.upper()
+            used_names.add(name)
+
+        nodes = []
         if isinstance(cl["nodes"], str):
-            if cl["nodes"] not in nsets:
-                errors += 1
-                logger.error(
-                    f"Nodeset {cl['nodes']}, required by concentrated load {i + 1}, is not defined"
-                )
-            else:
-                nodes.extend(nsets[cl["nodes"]])
+            nodes = nsets[cl["nodes"]]
         else:
-            for n in cl["nodes"]:
-                if n not in node_map:
-                    errors += 1
-                    logger.error(f"Node {n}, required by concentrated load {i + 1}, is not defined")
-                else:
-                    nodes.append(node_map[n])
-        boundary.append(
-            {
-                "name": name,
-                "local_dof": cl["dof"],
-                "type": NEUMANN,
-                "nodes": nodes,
-                "value": cl["value"],
-            }
-        )
+            nodes = [node_map[n] for n in cl["nodes"]]
 
-    # Process distributed load
-    dload: list[Any] = preprocessed.setdefault("dload", [])
-    for i, dl in enumerate(inp.get("distributed loads", [])):
-        if "name" in dl:
-            name = dl["name"]
+        local_dof = _normalize_dof(cl.get("dof", "x"))
+
+        bcs.append({
+            "name": name,
+            "local_dof": local_dof,
+            "type": NEUMANN,
+            "nodes": nodes,
+            "value": cl["value"],
+        })
+
+    # -------------------- distributed loads --------------------
+    dload = pre.setdefault("dload", [])
+    for dl in inp.get("distributed loads", []):
+        elems = dl["elements"]
+        if isinstance(elems, str):
+            elems = elsets[elems]
         else:
-            name = unique_name(inp["distributed loads"], "DLOAD")
-            dl["name"] = name
-        elems: list[int] = []
-        if isinstance(dl["elements"], str):
-            # elements given as set name
-            if dl["elements"] not in elsets:
-                errors += 1
-                logger.error(
-                    f"Element set {dl['elements']!r}, required by distributed load {i + 1}, not defined"
-                )
-            else:
-                elems.extend(elsets[eb["elements"]])
-        else:
-            for e in dl["elements"]:
-                if e not in elem_map:
-                    errors += 1
-                    logger.error(
-                        f"Element {e}, required by distributed load {i + 1}, is not defined"
-                    )
-                else:
-                    elems.append(elem_map[e])
-        dload.append(
-            {
-                "name": name,
-                "elements": elems,
-                "type": dl["type"],
-                "value": dl["value"],
-                "direction": dl["direction"],
-            }
-        )
+            elems = [elem_map[e] for e in elems]
 
-    # Create a mapping from global element index to block index, local elem index (within the block)
-    block_elem_map: dict[int, tuple[int, int]] = preprocessed.setdefault("block_elem_map", {})
-    for ib, block in enumerate(blocks):
-        for global_elem_index, local_elem_index in block["elem_map"].items():
-            if global_elem_index in block_elem_map:
-                errors += 1
-                logger.error(f"Duplicate element ID {e} found in multiple blocks")
-            block_elem_map[global_elem_index] = (ib, local_elem_index)
+        dload.append({
+            "name": dl.get("name", "").upper(),
+            "elements": elems,
+            "type": dl["type"],
+            "value": dl["value"],
+            "direction": dl["direction"],
+        })
 
-    # Check if all elements are assigned to an element block
-    if unassigned := set(range(num_elem)).difference(block_elem_map.keys()):
-        errors += 1
-        for e in unassigned:
-            logger.error(f"Element {e} is not assigned to any element blocks")
+    # -------------------- block_elem_map (tuple version) --------------------
+    bem = pre.setdefault("block_elem_map", {})
+    for block in blocks:
+        lst = []
+        for ge, le in block["elem_map"].items():
+            n1, n2 = block["connect"][le]
+            lst.append((ge, n1, n2))
+        bem[block["name"]] = lst
 
-    if errors:
-        raise ValueError("Stopping due to previous errors")
+    return pre
 
-    return preprocessed
+
+# ----------------------------------------------------------------------
+# Solve wrapper
+# ----------------------------------------------------------------------
+def solve(filename: str, options: dict[str, Any] | None = None):
+    with open(filename, "r") as f:
+        data = load(f)
+
+    pre = preprocess(data)
+    solver_opts = SolverOptions(**options) if options else SolverOptions()
+    return newton_solve_1d(pre, options=solver_opts)

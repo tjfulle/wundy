@@ -1,0 +1,97 @@
+wundy:
+  nodes:
+    - [1, 0.00]
+    - [2, 0.05]
+    - [3, 0.10]
+    - [4, 0.15]
+    - [5, 0.20]
+    - [6, 0.25]
+    - [7, 0.30]
+    - [8, 0.35]
+    - [9, 0.40]
+    - [10, 0.45]
+    - [11, 0.50]
+    - [12, 0.55]
+    - [13, 0.60]
+    - [14, 0.65]
+    - [15, 0.70]
+    - [16, 0.75]
+    - [17, 0.80]
+    - [18, 0.85]
+    - [19, 0.90]
+    - [20, 0.95]
+    - [21, 1.00]
+
+  elements:
+    - [1, 1, 2]
+    - [2, 2, 3]
+    - [3, 3, 4]
+    - [4, 4, 5]
+    - [5, 5, 6]
+    - [6, 6, 7]
+    - [7, 7, 8]
+    - [8, 8, 9]
+    - [9, 9, 10]
+    - [10, 10, 11]
+    - [11, 11, 12]
+    - [12, 12, 13]
+    - [13, 13, 14]
+    - [14, 14, 15]
+    - [15, 15, 16]
+    - [16, 16, 17]
+    - [17, 17, 18]
+    - [18, 18, 19]
+    - [19, 19, 20]
+    - [20, 20, 21]
+
+  boundary conditions:
+    - name: LEFT
+      nodes: [1]
+      dof: X
+      type: DIRICHLET
+      value: 0.0
+
+    - name: RIGHT
+      nodes: [21]
+      dof: X
+      type: DIRICHLET
+      value: 0.0
+
+  concentrated loads:
+    - {nodes: [1],  dof: X, value: -0.000000}
+    - {nodes: [2],  dof: X, value: -0.761814}
+    - {nodes: [3],  dof: X, value: -1.397064}
+    - {nodes: [4],  dof: X, value: -1.789243}
+    - {nodes: [5],  dof: X, value: -1.847759}
+    - {nodes: [6],  dof: X, value: -1.532088}
+    - {nodes: [7],  dof: X, value: -0.848528}
+    - {nodes: [8],  dof: X, value: -0.000000}
+    - {nodes: [9],  dof: X, value:  0.848528}
+    - {nodes: [10], dof: X, value:  1.532088}
+    - {nodes: [11], dof: X, value:  1.847759}
+    - {nodes: [12], dof: X, value:  1.789243}
+    - {nodes: [13], dof: X, value:  1.397064}
+    - {nodes: [14], dof: X, value:  0.761814}
+    - {nodes: [15], dof: X, value:  0.000000}
+    - {nodes: [16], dof: X, value: -0.761814}
+    - {nodes: [17], dof: X, value: -1.397064}
+    - {nodes: [18], dof: X, value: -1.789243}
+    - {nodes: [19], dof: X, value: -1.847759}
+    - {nodes: [20], dof: X, value: -1.532088}
+    - {nodes: [21], dof: X, value: -0.848528}
+
+  materials:
+    - type: ELASTIC
+      name: MAT
+      parameters:
+        E: 1.0
+        nu: 0.0
+
+  element blocks:
+    - name: BLOCK
+      material: MAT
+      elements: all
+      element:
+        type: T1D1
+        properties:
+          area: 1.0
