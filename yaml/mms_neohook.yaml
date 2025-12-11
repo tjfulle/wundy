@@ -1,0 +1,44 @@
+wundy:
+  # Nodes along a unit-length beam; spacing aligns with the manufactured solution grid
+  nodes: [[1, 0.0], [2, 0.2], [3, 0.4], [4, 0.6], [5, 0.8], [6, 1.0]]
+  elements: [[1, 1, 2], [2, 2, 3], [3, 3, 4], [4, 4, 5], [5, 5, 6]]
+  boundary conditions:
+  - name: left-w
+    dof: W
+    nodes: [1]
+    value: 0.0
+  - name: left-theta
+    dof: THETA
+    nodes: [1]
+    value: 0.0
+  - name: right-w
+    dof: W
+    nodes: [6]
+    value: 0.0
+  - name: right-theta
+    dof: THETA
+    nodes: [6]
+    value: 0.0
+  materials:
+  - type: neohook
+    name: mms-neo
+    parameters:
+      mu: 1.0
+      lam: 1.0
+      E: 1.0
+  element blocks:
+  - material: mms-neo
+    name: block-1
+    elements: all
+    element:
+      type: euler
+      properties:
+        area: 1.0
+        inertia: 1.0
+  distributed loads:
+  - name: mms-load
+    type: BX
+    direction: [1.0]
+    value: "-72.0 + 360.0 * x - 360.0 * x**2"
+    elements: all
+    n_gauss: 3

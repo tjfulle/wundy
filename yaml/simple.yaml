@@ -1,0 +1,32 @@
+wundy:
+  # Small 2-node bar to sanity check CLI output
+  nodes: [[1, 0.0], [2, 1.0]]
+  elements: [[1, 1, 2]]
+
+  boundary conditions:
+  - name: fix-left
+    type: DIRICHLET
+    dof: X
+    nodes: [1]
+    value: 0.0
+
+  concentrated loads:
+  - name: pull-right
+    dof: X
+    nodes: [2]
+    value: 1.0
+
+  materials:
+  - type: elastic
+    name: test-mat
+    parameters:
+      E: 1.0
+
+  element blocks:
+  - name: block-1
+    material: test-mat
+    elements: all
+    element:
+      type: T1D1
+      properties:
+        area: 1.0

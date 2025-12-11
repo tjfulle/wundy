@@ -1,22 +1,24 @@
 from typing import Any
 
-from schema import And
-from schema import Optional
-from schema import Or
-from schema import Schema
-from schema import Use
+from schema import And  # type: ignore
+from schema import Optional  # type: ignore
+from schema import Or  # type: ignore
+from schema import Schema  # type: ignore
+from schema import Use  # type: ignore
 
 NEUMANN = 0
 DIRICHLET = 1
 
 
-element_types = {"T1D1"}
+element_types = {"T1D1", "EULER"}
 bc_types = {"DIRICHLET", "NEUMANN"}
 
 
 def node_freedom_table(elem_type: str) -> tuple[int, ...]:
     if normalize_case(elem_type) == "T1D1":
         return (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    if normalize_case(elem_type) == "EULER":
+        return (0, 0, 0, 0, 0, 0, 2, 0, 0, 0)
     raise ValueError(f"Unknown element type {elem_type!r}")
 
 
@@ -53,7 +55,7 @@ def normalize_case(string: str) -> str:
 
 
 def dof_id_to_enum(dof: str) -> int:
-    return {"X": 0, "Y": 1, "Z": 2}[normalize_case(dof)]
+    return {"X": 0, "Y": 1, "Z": 2, "W": 0, "THETA": 1}[normalize_case(dof)]
 
 
 def valid_bc_type(arg: str) -> bool:
@@ -66,7 +68,7 @@ def bc_type_to_enum(bc_type: str) -> int:
 
 def valid_dof_id(dof: str):
     # extension to 2/3D: allow dof to be xyz
-    return normalize_case(dof) in {"X"}
+    return normalize_case(dof) in {"X", "W", "THETA"}
 
 
 def valid_dload_type(arg: str):
@@ -75,29 +77,53 @@ def valid_dload_type(arg: str):
 
 
 def validate_element(elem: dict[str, Any]) -> bool:
-    if normalize_case(elem["type"]) == "T1D1":
+    elem_type = normalize_case(elem["type"])
+    if elem_type == "T1D1":
         schema = Schema({Optional("area", default=1.0): And(isnumeric, ispositive)})
+        v = schema.validate(elem["properties"])
+        elem["properties"].update(v)
+    elif elem_type == "EULER":
+        schema = Schema(
+            {
+                Optional("area", default=1.0): And(isnumeric, ispositive),
+                "inertia": And(isnumeric, ispositive),
+            }
+        )
         v = schema.validate(elem["properties"])
         elem["properties"].update(v)
     else:
         raise ValueError(f"Unknown element type {elem['type']!r}")
     return True
 
+def valid_material_type(name: str) -> bool:
+    return normalize_case(name) in {"ELASTIC", "NEOHOOK"}
+
 
 def validate_material_parameters(material: dict[str, dict[str, Any]]) -> bool:
     elastic = Schema(
         {
             "E": And(isnumeric, ispositive, error="E must be > 0"),
-            "nu": And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),
+            Optional("nu", default=0.0): And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),        
         }
     )
+
+    neohook = Schema(
+        {
+            "mu": And(isnumeric, ispositive),
+            "lam": And(isnumeric, ispositive),
+            Optional("E", default=None): And(isnumeric, ispositive, error="E must be > 0"),
+        }
+    )
+
     if normalize_case(material["type"]) == "ELASTIC":
         elastic.validate(material["parameters"])
+    elif normalize_case(material["type"]) == "NEOHOOK":
+        neohook.validate(material["parameters"])
     else:
-        raise ValueError(f"Unknown material {material['type']!r}")
+        raise ValueError(f"Unknown material type {material['type']!r}")
+    
     return True
-
-
+        
 nodes_schema = Schema(
     And(
         list,
@@ -170,7 +196,7 @@ dload_schema = Schema(
                 And(list, list_of_int),  # list of elements
             ),
             "type": And(str, valid_dload_type, Use(normalize_case)),
-            "value": Use(float),
+            "value": Or(Use(float), And(str)),
             "direction": And(
                 list,
                 list_of_numeric,
@@ -178,6 +204,7 @@ dload_schema = Schema(
                 Use(lambda sequence: [float(x) for x in sequence]),
             ),
             Optional("name"): And(str, Use(normalize_case)),
+            Optional("n_gauss", default=None): Or(int, None),
         },
     )
 )
@@ -185,7 +212,7 @@ dload_schema = Schema(
 material_schema = Schema(
     And(
         {
-            "type": And(str, Use(normalize_case)),
+            "type": And(str, Use(normalize_case), valid_material_type),
             "name": And(str, Use(normalize_case)),
             "parameters": {str: object},
             Optional("density", default=0.0): And(isnumeric, ispositive),

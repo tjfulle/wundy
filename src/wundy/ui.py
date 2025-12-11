@@ -2,6 +2,7 @@ import logging
 from typing import IO
 from typing import Any
 
+import logging
 import numpy as np
 import yaml
 
@@ -19,6 +20,10 @@ def load(file: IO[Any]) -> dict[str, dict[str, Any]]:
 def set_element_defaults(elem: dict[str, Any]) -> bool:
     if elem["type"].upper() == "T1D1":
         nft = (1, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        props = {"node_per_elem": 2, "freedom_table": [nft, nft]}
+        elem["properties"].update(props)
+    elif elem["type"].upper() == "EULER":
+        nft = (0, 0, 0, 0, 0, 0, 2, 0, 0, 0)
         props = {"node_per_elem": 2, "freedom_table": [nft, nft]}
         elem["properties"].update(props)
     else:
@@ -260,7 +265,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                     f"Element set {dl['elements']!r}, required by distributed load {i + 1}, not defined"
                 )
             else:
-                elems.extend(elsets[eb["elements"]])
+                elems.extend(elsets[dl["elements"]])
         else:
             for e in dl["elements"]:
                 if e not in elem_map:
@@ -277,6 +282,7 @@ def preprocess(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 "type": dl["type"],
                 "value": dl["value"],
                 "direction": dl["direction"],
+                "n_gauss": dl.get("n_gauss"),
             }
         )
 
