@@ -66,17 +66,50 @@ def bc_type_to_enum(bc_type: str) -> int:
 
 def valid_dof_id(dof: str):
     # extension to 2/3D: allow dof to be xyz
-    return normalize_case(dof) in {"X"}
+    return normalize_case(dof) in {"X", "Y"}
 
 
 def valid_dload_type(arg: str):
     # extension to 2/3D: allow other DLOADs
-    return normalize_case(arg) in {"BX", "GRAV"}
+    return normalize_case(arg) in {"BX", "GRAV", "QY"}
+
+
+dload_profiles = {"UNIFORM", "EQUATION"}
+
+
+def valid_dload_profile(arg: str) -> bool:
+    return normalize_case(arg) in dload_profiles
+
+
+def validate_dload_profile_fields(d: dict[str, Any]) -> bool:
+    """Cross-field checks for distributed-load profiles.
+
+    - UNIFORM  : must have "value"
+    - EQUATION : must have an "expression" string
+    """
+    profile = normalize_case(d.get("profile", "UNIFORM"))
+
+    if profile == "UNIFORM":
+        return "value" in d
+
+    if profile == "EQUATION":
+        expr = d.get("expression")
+        return isinstance(expr, str) and expr.strip() != ""
+
+    return False
 
 
 def validate_element(elem: dict[str, Any]) -> bool:
     if normalize_case(elem["type"]) == "T1D1":
-        schema = Schema({Optional("area", default=1.0): And(isnumeric, ispositive)})
+        # T1D1 is used for both axial bars and Euler–Bernoulli beams.
+        # - area: cross-sectional area (axial stiffness EA)
+        # - I   : second moment of area (bending stiffness EI)
+        schema = Schema(
+            {
+                Optional("area", default=1.0): And(isnumeric, ispositive),
+                Optional("I"): And(isnumeric, ispositive),
+            }
+        )
         v = schema.validate(elem["properties"])
         elem["properties"].update(v)
     else:
@@ -88,13 +121,22 @@ def validate_material_parameters(material: dict[str, dict[str, Any]]) -> bool:
     elastic = Schema(
         {
             "E": And(isnumeric, ispositive, error="E must be > 0"),
-            "nu": And(isnumeric, lambda x: -1.0 <= x < 0.5, error="nu must be between -1 and .5"),
+            "nu": And(
+                isnumeric,
+                lambda x: -1.0 <= x < 0.5,
+                error="nu must be between -1 and .5",
+            ),
         }
     )
-    if normalize_case(material["type"]) == "ELASTIC":
+
+    mat_type = normalize_case(material["type"])
+
+    # Both ELASTIC and NEO_HOOKE share the same parameter requirements (E, nu)
+    if mat_type in {"ELASTIC", "NEO_HOOKE", "NEO-HOOKE"}:
         elastic.validate(material["parameters"])
     else:
         raise ValueError(f"Unknown material {material['type']!r}")
+
     return True
 
 
@@ -170,15 +212,21 @@ dload_schema = Schema(
                 And(list, list_of_int),  # list of elements
             ),
             "type": And(str, valid_dload_type, Use(normalize_case)),
-            "value": Use(float),
+            # For UNIFORM loads we use "value"; GRAV also uses "value".
+            Optional("value", default=0.0): Use(float),
+            # Profile: UNIFORM (default) or EQUATION
+            Optional("profile", default="UNIFORM"): And(str, Use(normalize_case)),
+            # EQUATION data
+            Optional("expression"): And(str),
             "direction": And(
                 list,
                 list_of_numeric,
-                lambda sequence: len(sequence) == 1,  # change to <= 2/3 for 2D/3D
+                lambda sequence: len(sequence) == 1,  # 1D problem
                 Use(lambda sequence: [float(x) for x in sequence]),
             ),
             Optional("name"): And(str, Use(normalize_case)),
         },
+        lambda d: validate_dload_profile_fields(d),
     )
 )
 

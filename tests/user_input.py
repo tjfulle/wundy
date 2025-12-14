@@ -37,7 +37,6 @@ wundy:
     elements: all
     value: 2.0
     direction: [1.0]
-  distributed loads:
   - type: GRAV
     elements: all
     direction: [-1.0]
