@@ -72,7 +72,7 @@ class NewtonNonlinearSolver(Solver):
             else:
                 Kbc, Fbc = model.apply_linear_constraints(Kbc, Fbc, u, du)
                 x = np.linalg.solve(Kbc, Fbc)
-                du = x[:model.num_dof]
+                du = x[: model.num_dof]
             u += du
             if np.linalg.norm(du) < self.tol:
                 break

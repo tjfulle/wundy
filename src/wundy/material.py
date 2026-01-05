@@ -34,3 +34,16 @@ class LinearElastic(Material):
         D = np.array([[self.E]], dtype=float)
         s = D[0, 0] * e
         return D, s
+
+
+class NeoHooke(Material):
+    type = "NEOHOOKE"
+
+    def __init__(self, density: float = 1.0, **parameters: float) -> None:
+        super().__init__(density=density, **parameters)
+        self.E = parameters["E"]
+
+    def eval(self, e: NDArray[float]) -> tuple[NDArray[float], NDArray[float]]:
+        D = np.array([[self.E / 2.0 + self.E / 2 / (e + 1) ** 2]], dtype=float)
+        s = D[0, 0] * e
+        return D, s

@@ -2,8 +2,7 @@ import io
 
 import numpy as np
 
-from wundy import ui
-from wundy.wundy import solve
+from wundy.model import Model
 
 
 def test_second_1():
@@ -43,22 +42,12 @@ wundy:
         area: 1
 """)
     file.seek(0)
-    data = ui.load(file)
-    inp = ui.preprocess(data)
-    soln = solve(
-        inp["coords"],
-        inp["blocks"],
-        inp["bcs"],
-        inp["dload"],
-        inp["materials"],
-        inp["equations"],
-        inp["block_elem_map"],
-        inp["solver"],
-    )
+    model = Model.from_file(file)
+    model.solve()
 
-    dofs = soln["dofs"]
-    K = soln["stiff"]
-    F = soln["force"]
+    dofs = model.solution["dofs"]
+    K = model.solution["stiff"]
+    F = model.solution["force"]
     assert np.allclose(dofs, [0, 0.2, 0.4, 0.6, 0.8])
     R = np.dot(K, dofs) - F
     assert R[0] == -2.0

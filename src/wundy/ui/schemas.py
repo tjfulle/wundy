@@ -7,11 +7,9 @@ from schema import Or
 from schema import Schema
 from schema import Use
 
+from ..constants import DIRICHLET
+from ..constants import NEUMANN
 from .eqparse import parse_equation_expression
-
-NEUMANN = 0
-DIRICHLET = 1
-
 
 element_types = {"T1D2", "T2D2", "B1D2"}
 bc_types = {"DIRICHLET", "NEUMANN"}
@@ -111,6 +109,9 @@ def validate_material_parameters(material: dict[str, dict[str, Any]]) -> bool:
     )
     if normalize_case(material["type"]) == "ELASTIC":
         elastic.validate(material["parameters"])
+    elif normalize_case(material["type"]) == "NEOHOOKE":
+        neo_hooke = elastic
+        neo_hooke.validate(material["parameters"])
     else:
         raise ValueError(f"Unknown material {material['type']!r}")
     return True

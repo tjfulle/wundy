@@ -1,84 +1,23 @@
 import io
+import pathlib
+from typing import Generator
 
 import numpy as np
+import pytest
 
+import wundy
 import wundy.model
 
 
-def test_model_1():
-    file = io.StringIO()
-    file.write("""\
-wundy:
-  nodes:
-  - [1, 0, 0]
-  - [2, 1, 0]
-  - [3, 2, 0]
-  - [4, 0, 1]
-  - [5, 1, 1]
-  - [6, 2, 1]
-  - [7, 0, 2]
-  - [8, 1, 2]
-  - [9, 2, 2]
-  elements:
-  #   7--(5)--8--(6)--9
-  #   |       |       |
-  # (10)    (11)   (12)
-  #   |       |       |
-  #   4--(3)--5--(4)--6
-  #   |       |       |
-  #  (7)     (8)     (9)
-  #   |       |       |
-  #   1--(1)--2--(2)--3
-  - [1, 1, 2]
-  - [2, 2, 3]
-  - [3, 4, 5]
-  - [4, 5, 6]
-  - [5, 7, 8]
-  - [6, 8, 9]
-  - [7, 1, 4]
-  - [8, 2, 5]
-  - [9, 3, 6]
-  - [10, 4, 7]
-  - [11, 5, 8]
-  - [12, 6, 9]
-  boundary conditions:
-  - name: fix-nodes
-    dof: x
-    nodes: [1]
-  concentrated loads:
-  - name: cload-1
-    nodes: [5]
-    value: 2.0
-  materials:
-  - type: elastic
-    name: mat-1
-    parameters:
-      E: 10.0
-      nu: 0.3
-  element blocks:
-  - material: mat-1
-    name: block-1
-    elements: [1, 2, 3, 10]
-    element:
-      type: T1D2
-      properties:
-        area: 1
-  - material: mat-1
-    name: block-2
-    elements: [4, 5, 6, 11]
-    element:
-      type: T2D2
-      properties:
-        area: 1
-  - material: mat-1
-    name: block-3
-    elements: [7, 8, 9, 12]
-    element:
-      type: B1D2
-      properties:
-        I: 1
-""")
-    file.seek(0)
+@pytest.fixture
+def inp_dir() -> Generator[pathlib.Path, None, None]:
+    d = pathlib.Path(wundy.__file__).parent
+    root = d.parent.parent
+    yield root / "tests/inputs"
+
+
+def test_model_1(inp_dir):
+    file = inp_dir / "mixed-el-1d.yaml"
     model = wundy.model.Model.from_file(file)
     model.prepare()
     assert np.allclose(model.dof_map[0, [0, 1, 3]], [0, 1, 2])

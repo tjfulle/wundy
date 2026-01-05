@@ -6,12 +6,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .block import Block
+from .constants import DIRICHLET
+from .constants import NEUMANN
 from .element import Element
 from .material import Material
 from .solver import Solver
 from .ui import load
-from .ui.schemas import DIRICHLET
-from .ui.schemas import NEUMANN
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,10 @@ class Model:
                 self.add_dirichlet_boundary(bc["name"], bc["nodes"], bc["dof"], bc["value"])
             elif bc["type"] == NEUMANN:
                 self.add_concentrated_load(bc["name"], bc["nodes"], bc["dof"], bc["value"])
+        for cl in inp.get("concentrated loads", []):
+            if not cl.get("name"):
+                cl["name"] = unique_name(inp["concentrated loads"], "ConcentratedLoad")
+            self.add_concentrated_load(cl["name"], cl["nodes"], cl["dof"], cl["value"])
         for dl in inp.get("distributed loads", []):
             if not dl.get("name"):
                 dl["name"] = unique_name(inp["distributed loads"], "DistributedLoad")
@@ -352,13 +356,14 @@ class Model:
 
     def add_equation(self, equation: list[tuple[int, int, float]]) -> None:
         # Process multi-point constraint equations
+        eq: list[tuple[int, int, float]] = []
         for node, dof, coeff in equation:
             if node not in self.node_map:
                 raise ValueError(f"Node {node} is not defined")
             if dof != 1:
                 raise ValueError(f"{dof=} not implemented (choose dof=1)")
-            equation.append((self.node_map[node], dof - 1, coeff))
-        self.equations.append(equation)
+            eq.append((self.node_map[node], dof - 1, coeff))
+        self.equations.append(eq)
 
     def prepare(self) -> None:
         # Check if all elements are assigned to an element block
@@ -374,7 +379,7 @@ class Model:
         if disconnected := allnodes.difference(connected):
             for node in disconnected:
                 for bc in self.boundary:
-                    if bc["type"] == DIRICHLET and self.node_map[node] in bc["nodes"]:
+                    if bc["type"] == DIRICHLET and node in bc["nodes"]:
                         break
                 else:
                     n = self.reverse_lookup(node=node)
@@ -471,8 +476,9 @@ class Model:
         F = np.zeros(self.num_dof, dtype=float)
         for i, block in enumerate(self.blocks):
             mask = self.block_mask(i)
-            kb, fb = block.assemble(u[mask], du[mask])
-            bft = np.arange(self.num_dof, dtype=int)[mask]
+            ix = self.block_dof_map[i][mask]
+            kb, fb = block.assemble(u[ix], du[ix])
+            bft = np.arange(self.num_dof, dtype=int)[ix]
             K[np.ix_(bft, bft)] += kb
             F[np.ix_(bft)] += fb
         return K, F
